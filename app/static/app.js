@@ -24,6 +24,7 @@ async function api(path, opts = {}) {
   const o = { ...opts };
   if (o.json !== undefined) { o.body = JSON.stringify(o.json); o.headers = { 'content-type': 'application/json' }; delete o.json; }
   const r = await fetch(path, o);
+  if (r.status === 401) { location.href = '/login'; throw new Error('Signed out'); }
   if (!r.ok) {
     let msg = r.statusText;
     try { msg = (await r.json()).detail || msg; } catch { /* not json */ }
@@ -37,14 +38,37 @@ async function settings() { return SETTINGS || (SETTINGS = await api('/api/setti
 async function saveSettings(patch) { SETTINGS = await api('/api/settings', { method: 'PUT', json: patch }); return SETTINGS; }
 
 // ---------------------------------------------------------------- audio
-const A = { ctx: null, stream: null, node: null, listeners: new Set(), gate: null, smooth: null };
+const A = { ctx: null, ready: null, stream: null, node: null, listeners: new Set(), gate: null, smooth: null };
+const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
+// Safari 16.4+: tell iOS we play and record at once, so audio isn't muted by the
+// silent switch and headphones stay the output while the mic is open.
+function setAudioSession(type) {
+  try { if (navigator.audioSession) navigator.audioSession.type = type; } catch { /* not supported */ }
+}
+
+// Bluetooth delay differs per device (AirPods vs wired), so the extra latency lives in
+// this browser's storage. Falls back to the old shared server setting.
+const LAT_KEY = 'vl-latency-ms';
+function deviceLatencyMs() {
+  try { const v = localStorage.getItem(LAT_KEY); if (v !== null && v !== '') return Number(v); } catch { /* storage blocked */ }
+  return SETTINGS?.latencyMs || 0;
+}
+function setDeviceLatencyMs(ms) { try { localStorage.setItem(LAT_KEY, String(Math.round(ms))); } catch { /* storage blocked */ } }
+
+// Must be called from a tap/click the first time (browsers block audio until then).
+// resume() is called before any await so it still counts as part of the gesture.
 async function audioCtx() {
-  if (!A.ctx) {
+  if (!A.ctx || A.ctx.state === 'closed') {
     A.ctx = new AudioContext({ latencyHint: 'interactive' });
-    await A.ctx.audioWorklet.addModule('/static/pitch-worklet.js');
+    A.ctx.onstatechange = () => {
+      if (A.ctx?.state === 'interrupted') toast('Audio was interrupted (a call, Siri or another app). Press play again.', 6000);
+    };
+    A.ready = A.ctx.audioWorklet.addModule('/static/pitch-worklet.js');
   }
-  if (A.ctx.state === 'suspended') await A.ctx.resume();
+  const resumed = A.ctx.state === 'running' ? null : A.ctx.resume().catch(() => {});
+  await A.ready;
+  await resumed;
   return A.ctx;
 }
 
@@ -68,13 +92,19 @@ function smoothPitch(prev, hz) {
 }
 
 async function startMic() {
-  const ctx = await audioCtx();
-  if (A.stream) return;
-  const s = await settings();
-  if (!navigator.mediaDevices?.getUserMedia) throw new Error('Microphone needs HTTPS (or localhost). See the README.');
+  if (A.stream) return audioCtx();
+  if (!navigator.mediaDevices?.getUserMedia) throw new Error('Microphone needs HTTPS. Open the https:// address (see the README).');
+  setAudioSession('play-and-record');
+  // On iPhone, opening the mic switches AirPods into headset mode, which changes the
+  // audio hardware's sample rate. A context made before that can play back garbled,
+  // so open the mic first and build the context afterwards. (While the mic is live,
+  // iOS lets the page start audio without another tap.)
+  if (IS_IOS && A.ctx && A.ctx.state !== 'closed') { try { await A.ctx.close(); } catch { /* ignore */ } A.ctx = null; }
+  const s = SETTINGS || await settings();
   A.stream = await navigator.mediaDevices.getUserMedia({
     audio: { echoCancellation: !!s.echoCancellation, noiseSuppression: false, autoGainControl: false },
   });
+  const ctx = await audioCtx();
   const src = ctx.createMediaStreamSource(A.stream);
   A.node = new AudioWorkletNode(ctx, 'pitch-processor');
   const sink = ctx.createGain(); sink.gain.value = 0;
@@ -90,17 +120,20 @@ async function startMic() {
     const frame = { t: f.t, hz, midi: hz ? hzToMidi(hz) : null, rms: f.rms };
     A.listeners.forEach(fn => fn(frame));
   };
+  return ctx;
 }
 
 function stopMic() {
   A.stream?.getTracks().forEach(t => t.stop());
   A.node?.disconnect();
   A.stream = null; A.node = null; A.listeners.clear();
+  setAudioSession('auto');
 }
 
 function onPitch(fn) { A.listeners.add(fn); return () => A.listeners.delete(fn); }
 
 // Delay between "sound leaves the speaker" and "pitch frame arrives", in seconds.
+// Safari doesn't report output latency, so on iPhone this is mostly the per-device setting.
 function autoLatency() {
   const ctx = A.ctx; let l = (ctx?.outputLatency || 0) + (ctx?.baseLatency || 0);
   const tr = A.stream?.getAudioTracks()[0];
@@ -109,12 +142,17 @@ function autoLatency() {
   return l;
 }
 
+// Songs are decoded off to the side at 32 kHz: no tap needed to load them, a third less
+// memory than 48 kHz on phones, and the buffers play in whichever context exists later.
 const bufferCache = new Map();
 async function loadBuffer(url) {
   if (bufferCache.has(url)) return bufferCache.get(url);
-  const ctx = await audioCtx();
-  const data = await (await fetch(url)).arrayBuffer();
-  const buf = await ctx.decodeAudioData(data);
+  const r = await fetch(url);
+  if (r.status === 401) { location.href = '/login'; throw new Error('Signed out'); }
+  if (!r.ok) throw new Error(`${r.status} loading audio`);
+  const data = await r.arrayBuffer();
+  const dec = new OfflineAudioContext(1, 1, 32000);
+  const buf = await dec.decodeAudioData(data);
   if (bufferCache.size > 4) bufferCache.delete(bufferCache.keys().next().value);
   bufferCache.set(url, buf);
   return buf;
@@ -236,11 +274,10 @@ class Practice {
   }
 
   async play({ from, to }) {
-    const ctx = await audioCtx();
-    await startMic();
+    const ctx = await startMic();
     const s = this.opts.settings;
     this.section = { from, to };
-    this.latency = autoLatency() + (s.latencyMs || 0) / 1000;
+    this.latency = autoLatency() + deviceLatencyMs() / 1000;
     for (const n of this.notes) if (n.t1 > from && n.t0 < to) { n.frames = []; n.result = null; }
     this.trail = [];
     const lead = 0.15;
@@ -448,16 +485,107 @@ function resultsHTML(res, s) {
     <div class="stat"><span class="dim small">Tendency</span><b>${biasTxt}</b></div>
     <div class="stat"><span class="dim small">Weakest notes</span><b>${worst.join(' ') || '–'}</b></div>
   </div>
-  ${Math.abs(off) >= 60 ? `<p class="small">Your pitch lines up best with the notes when shifted by ${off} ms. If that happens every time, <button data-latency="${off}">add ${off} ms to latency</button></p>` : ''}
+  ${Math.abs(off) >= 60 ? `<p class="small">Your pitch lines up best with the notes when shifted by ${off} ms. Bluetooth headphones usually need this once. <button data-latency="${off}">Add ${off} ms for this device</button></p>` : ''}
   ${res.take ? `<p><audio controls src="${URL.createObjectURL(res.take)}"></audio></p>` : ''}
   </div>`;
 }
 
 function bindLatencyButton(el) {
-  el.querySelectorAll('[data-latency]').forEach(b => b.onclick = async () => {
-    const s = await settings();
-    await saveSettings({ latencyMs: (s.latencyMs || 0) + Number(b.dataset.latency) });
-    toast(`Latency offset now ${SETTINGS.latencyMs} ms`); b.disabled = true;
+  el.querySelectorAll('[data-latency]').forEach(b => b.onclick = () => {
+    setDeviceLatencyMs(deviceLatencyMs() + Number(b.dataset.latency));
+    toast(`Latency on this device is now ${deviceLatencyMs()} ms`); b.disabled = true;
+  });
+}
+
+// ---------------------------------------------------------------- timing check
+/* Measures how late your voice reaches the app compared with when a note was played:
+ * output delay (Bluetooth can be 150-300 ms) plus mic delay. You hear a count-in, then
+ * sing "da" with each beep. The beeps have rests in an uneven pattern so the result
+ * can't be mistaken for one beat early or late. Runs once per browser session. */
+const CHECK_KEY = 'vl-timing-checked';
+const CHECK_BEAT = 0.5;
+const CHECK_PATTERN = [0, 1, 2, 4, 5, 7, 8, 9, 11];   // beats with a note, after the count-in
+const CHECK_NOTE = 0.28;
+
+function needsTimingCheck() { try { return !sessionStorage.getItem(CHECK_KEY); } catch { return false; } }
+function markTimingChecked() { try { sessionStorage.setItem(CHECK_KEY, '1'); } catch { /* ignore */ } }
+
+function estimateDelay(frames, onsets) {
+  const inNote = t => onsets.some(o => t >= o && t < o + CHECK_NOTE);
+  const noteFrames = onsets.length * CHECK_NOTE / 0.01;
+  let best = { d: null, score: -Infinity, covered: 0 };
+  for (let d = -0.1; d <= 0.9; d += 0.005) {
+    let score = 0, hit = 0;
+    for (const f of frames) {
+      if (!f.v) continue;
+      if (inNote(f.t - d)) { score++; hit++; } else score -= 0.7;
+    }
+    if (score > best.score) best = { d, score, covered: hit / noteFrames };
+  }
+  return best;
+}
+
+function timingCheck() {
+  return new Promise(resolve => {
+    const wrap = document.createElement('div');
+    wrap.className = 'modal';
+    document.body.appendChild(wrap);
+    const close = ok => { off?.(); wrap.remove(); resolve(ok); };
+    let off = null;
+    const intro = (note = '') => {
+      wrap.innerHTML = `<div class="card">
+        <h2 style="margin-top:0">Quick timing check</h2>
+        <p>Put your headphones on. You'll hear four clicks, then short beeps with a few gaps. Sing a short "da" in time with each beep, as if you were singing along.</p>
+        <p class="small dim">This measures your headphone and mic delay so your notes line up. About 10 seconds. Current setting for this device: ${deviceLatencyMs()} ms extra.</p>
+        ${note}
+        <div class="row"><button class="primary" data-a="start">Start</button><button data-a="skip">Skip for now</button></div></div>`;
+      wrap.querySelector('[data-a=start]').onclick = run;
+      wrap.querySelector('[data-a=skip]').onclick = () => { markTimingChecked(); close(true); };
+    };
+    async function run() {
+      wrap.innerHTML = `<div class="card"><h2 style="margin-top:0">Listen…</h2><p class="tuner" id="tc-beat">·</p><p class="dim small" style="text-align:center">Sing "da" with each beep</p></div>`;
+      let ctx;
+      try { ctx = await startMic(); } catch (e) { intro(`<p class="err">${esc(e.message)}</p>`); return; }
+      const s = SETTINGS || await settings();
+      const m = Math.round((s.rangeLow + s.rangeHigh) / 2);
+      const out = ctx.createGain(); out.connect(ctx.destination);
+      const t0 = ctx.currentTime + 0.5;                 // first count-in click
+      const start = t0 + 4 * CHECK_BEAT;                 // first beep
+      for (let i = 0; i < 4; i++) playTone(ctx, out, m + 12, t0 + i * CHECK_BEAT, 0.05, 0.3);
+      const onsets = CHECK_PATTERN.map(b => b * CHECK_BEAT);
+      onsets.forEach(o => playTone(ctx, out, m, start + o, CHECK_NOTE, 0.3));
+      const frames = [];
+      off = onPitch(f => frames.push({ t: f.t - start, v: f.midi !== null && Math.abs(centsOff(f.midi, m, true)) < 250 }));
+      const end = start + onsets[onsets.length - 1] + 1.4;
+      const beatEl = wrap.querySelector('#tc-beat');
+      await new Promise(done => {
+        const tick = () => {
+          const t = ctx.currentTime;
+          if (t >= end) return done();
+          if (t < t0) beatEl.textContent = '·';
+          else if (t < start) beatEl.textContent = String(Math.floor((t - t0) / CHECK_BEAT) + 1);
+          else beatEl.textContent = onsets.some(o => t - start >= o && t - start < o + CHECK_NOTE) ? 'da' : '·';
+          requestAnimationFrame(tick);
+        };
+        tick();
+      });
+      off(); off = null; out.disconnect();
+      const est = estimateDelay(frames, onsets);
+      if (est.d === null || est.covered < 0.35) {
+        intro(`<p class="err">Didn't hear enough singing to measure. Try again, singing a bit louder, right on each beep.</p>`);
+        return;
+      }
+      const totalMs = Math.round(est.d * 1000);
+      const extra = Math.round(totalMs - autoLatency() * 1000);
+      setDeviceLatencyMs(extra);
+      markTimingChecked();
+      wrap.innerHTML = `<div class="card"><h2 style="margin-top:0">Delay: ${totalMs} ms</h2>
+        <p class="dim">${totalMs > 120 ? 'That\'s typical for Bluetooth headphones.' : 'Nice and low.'} Saved for this device; your notes will now line up.</p>
+        <div class="row"><button class="primary" data-a="ok">Continue</button><button data-a="again">Run it again</button></div></div>`;
+      wrap.querySelector('[data-a=ok]').onclick = () => close(true);
+      wrap.querySelector('[data-a=again]').onclick = run;
+    }
+    intro();
   });
 }
 
@@ -603,6 +731,7 @@ route(/^\/song\/([0-9a-f]{12})$/, async id => {
   async function go() {
     const { from, to } = sec();
     if (to - from < 2) return toast('Section is too short');
+    if (needsTimingCheck() && !(await timingCheck())) return;
     const start = P.pos >= from && P.pos < to - 1 ? P.pos : from;
     playBtn.textContent = '■ Stop'; $('#res').innerHTML = '';
     try { await P.play({ from: start, to }); } catch (e) { playBtn.textContent = '▶ Sing'; return toast(e.message, 6000); }
@@ -611,8 +740,8 @@ route(/^\/song\/([0-9a-f]{12})$/, async id => {
   const origStop = P.stop.bind(P);
   P.stop = async (finished) => {
     const res = await origStop(finished);
+    if (!res || !document.body.contains(stage)) return res;   // left the page mid-song
     playBtn.textContent = '▶ Sing';
-    if (!res) return res;
     $('#res').innerHTML = resultsHTML(res, s); bindLatencyButton($('#res'));
     if (res.score !== null && res.notes.length >= 4) {
       saveRun('song', id, song.title, res).catch(e => toast('Couldn’t save run: ' + e.message));
@@ -694,8 +823,8 @@ route(/^\/drill\/(\w+)$/, async key => {
     const orig = P.stop.bind(P);
     P.stop = async fin => {
       const res = await orig(fin);
+      if (!res || !$('#play')) return res;   // left the page mid-drill
       $('#play').textContent = '▶ Start';
-      if (!res) return res;
       $('#res').innerHTML = resultsHTML(res, s); bindLatencyButton($('#res'));
       if (res.score !== null && res.notes.length >= 4) saveRun('drill', key, title, res).catch(e => toast(e.message));
       P.pos = 0;
@@ -707,6 +836,7 @@ route(/^\/drill\/(\w+)$/, async key => {
   $('#vG').oninput = e => { vols.guide = +e.target.value; P.setVolume('guide', vols.guide); };
   $('#play').onclick = async () => {
     if (P.playing) return P.stop(false);
+    if (needsTimingCheck() && !(await timingCheck())) return;
     $('#res').innerHTML = ''; $('#play').textContent = '■ Stop';
     try { await P.play({ from: 0, to: P.target.duration }); } catch (e) { $('#play').textContent = '▶ Start'; toast(e.message, 6000); }
   };
@@ -798,8 +928,10 @@ route(/^\/ear$/, async () => {
   let off = null;
   const mid = Math.round((s.rangeLow + s.rangeHigh) / 2);
   $('#start').onclick = async () => {
-    const ctx = await audioCtx();
     const mode = $('#mode').value, lv = EAR_LEVELS[$('#lvl').value];
+    // Sing-back needs the mic; open it first so the same audio setup is used throughout (matters on iPhone).
+    let ctx;
+    try { ctx = mode === 'sb' ? await startMic() : await audioCtx(); } catch (e) { return toast(e.message, 6000); }
     const answers = [];
     const out = ctx.createGain(); out.connect(ctx.destination);
     for (let i = 0; i < 10; i++) {
@@ -924,7 +1056,6 @@ route(/^\/settings$/, async () => {
     <div class="card grid2" id="form">
       <label>Green zone (cents) <input type="number" name="greenCents" min="5" max="60" value="${s.greenCents}"></label>
       <label>Amber zone (cents) <input type="number" name="amberCents" min="10" max="120" value="${s.amberCents}"></label>
-      <label>Extra latency (ms) <input type="number" name="latencyMs" min="-500" max="1000" step="10" value="${s.latencyMs}"></label>
       <label>Scroll speed (px/s) <input type="number" name="pxPerSecond" min="60" max="400" step="10" value="${s.pxPerSecond}"></label>
       <label><input type="checkbox" name="octaveFree" ${s.octaveFree ? 'checked' : ''}> Any octave counts</label>
       <label><input type="checkbox" name="recordTakes" ${s.recordTakes ? 'checked' : ''}> Record my takes</label>
@@ -932,11 +1063,18 @@ route(/^\/settings$/, async () => {
     </div>
     <div class="row"><button class="primary" id="save">Save</button>
       <button id="preset-b">Beginner tolerances</button><button id="preset-a">Advanced tolerances</button></div>
-    <p class="small dim">Bluetooth and speaker delay reported by the browser is compensated automatically; "Extra latency" is added on top. After a run, the results suggest a correction if your timing is consistently off.</p>
+    <h2>Timing on this device</h2>
+    <div class="card">
+      <div class="row"><label class="dim small">Extra delay (ms) <input type="number" id="lat" min="-300" max="1000" step="10" value="${deviceLatencyMs()}"></label>
+        <button id="latSave">Save</button><button class="primary" id="latCheck">Run timing check</button></div>
+      <p class="small dim">Each phone or computer keeps its own value. The check runs once per session before your first song or warm-up; run it again whenever you switch headphones (for example, AirPods to wired).</p>
+    </div>
     <div class="card small dim">Server: yt-dlp ${esc(health.yt_dlp || '?')} · separation ${esc(health.demucs_model || '?')} · pitch ${esc(health.crepe_model || '?')} · ${health.queue ?? '?'} queued</div>`;
   const form = $('#form');
   $('#preset-b').onclick = () => { form.querySelector('[name=greenCents]').value = 35; form.querySelector('[name=amberCents]').value = 70; };
   $('#preset-a').onclick = () => { form.querySelector('[name=greenCents]').value = 15; form.querySelector('[name=amberCents]').value = 35; };
+  $('#latSave').onclick = () => { setDeviceLatencyMs(Number($('#lat').value)); toast('Saved for this device'); };
+  $('#latCheck').onclick = async () => { await timingCheck(); $('#lat').value = deviceLatencyMs(); };
   $('#save').onclick = async () => {
     const patch = {};
     form.querySelectorAll('input').forEach(i => { patch[i.name] = i.type === 'checkbox' ? i.checked : Number(i.value); });
@@ -945,4 +1083,5 @@ route(/^\/settings$/, async () => {
   };
 }, 'settings');
 
+api('/api/me').then(m => { if (m.login) $('#logout').hidden = false; }).catch(() => {});
 render();

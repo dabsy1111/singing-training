@@ -6,7 +6,9 @@ if [ ! -f .env ]; then
   cp .env.example .env
   IP=$(hostname -I 2>/dev/null | awk '{print $1}')
   [ -n "$IP" ] && sed -i "s/^VL_HOST=.*/VL_HOST=$IP/" .env
-  echo "Created .env with VL_HOST=${IP:-<edit me>}"
+  PW=$(head -c 18 /dev/urandom | base64 | tr -d '/+=' | head -c 20)
+  sed -i "s/^VL_PASSWORD=.*/VL_PASSWORD=$PW/" .env
+  echo "Created .env with VL_HOST=${IP:-<edit me>} and password: $PW (change it in .env if you like)"
 fi
 mkdir -p data
 docker compose pull

@@ -1,4 +1,4 @@
-# Vocal Lab. Paste this into a new Dockge stack, add VL_HOST to the stack's .env, and deploy.
+# Vocal Lab. Paste this into a new Dockge stack, add VL_HOST and VL_PASSWORD to the stack's .env, and deploy.
 # Updates: press Update in Dockge (pulls the newest image built from GitHub).
 
 services:
@@ -7,6 +7,7 @@ services:
     container_name: vocal-lab
     restart: unless-stopped
     environment:
+      VL_PASSWORD: ${VL_PASSWORD:-}               # sign-in password; required for Cloudflare tunnel access
       MAX_SONG_MINUTES: ${MAX_SONG_MINUTES:-12}
       CREPE_MODEL: ${CREPE_MODEL:-tiny}          # tiny (fast) or full (~15x slower on CPU)
       DEMUCS_MODEL: ${DEMUCS_MODEL:-htdemucs}    # htdemucs, htdemucs_ft or mdx_extra
@@ -21,24 +22,34 @@ services:
     container_name: vocal-lab-caddy
     restart: unless-stopped
     ports:
-      - "${VL_HTTPS_PORT:-8443}:443"
+      - "${VL_HTTPS_PORT:-8443}:443"          # LAN: https://VL_HOST:8443
+      - "${VL_TUNNEL_PORT:-18095}:80"         # Cloudflare tunnel: point it at http://VL_HOST:18095
     volumes:
       - ./caddy-data:/data
     depends_on:
       - app
     # The Caddy config lives in an environment variable so that any change to it
     # makes Docker recreate the container (Dockge's Deploy picks it up).
+    # Port 80 inside is plain HTTP for cloudflared; Cloudflare adds the HTTPS.
+    # trusted_proxies lets the app see that the original request was HTTPS.
     # default_sni: browsers don't say which site they want when you browse to an
     # IP address, and inside Docker Caddy can't see which IP you used.
-    # To add a password, put a basic_auth block above reverse_proxy
-    # (hash from: docker exec vocal-lab-caddy caddy hash-password).
     environment:
       CADDYFILE: |
         {
           default_sni ${VL_HOST:-localhost}
+          servers {
+            trusted_proxies static private_ranges
+          }
         }
         https://${VL_HOST:-localhost} {
           tls internal
+          request_body {
+            max_size 500MB
+          }
+          reverse_proxy app:8000
+        }
+        http://:80 {
           request_body {
             max_size 500MB
           }

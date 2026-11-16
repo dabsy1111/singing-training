@@ -7,12 +7,12 @@ import shutil
 import uuid
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import db, pipeline
+from . import auth, db, pipeline
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
@@ -22,6 +22,7 @@ UPLOAD_DIR = DATA_DIR / "uploads"
 STATIC = Path(__file__).parent / "static"
 
 app = FastAPI(title="Vocal Lab")
+app.middleware("http")(auth.middleware)
 
 
 @app.on_event("startup")
@@ -29,6 +30,7 @@ def startup():
     for p in (DATA_DIR, pipeline.SONGS_DIR, TAKES_DIR, UPLOAD_DIR):
         p.mkdir(parents=True, exist_ok=True)
     db.init(DATA_DIR / "vocal-lab.db")
+    auth.init(DATA_DIR)
     pipeline.start_worker()
     # Pick up anything that was interrupted by a restart.
     for s in db.list_songs():
@@ -256,6 +258,26 @@ def health():
 # --------------------------------------------------------------------------
 
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
+
+
+@app.get("/login")
+def login_form():
+    return auth.login_page()
+
+
+@app.post("/login")
+def login(request: Request, password: str = Form("")):
+    return auth.handle_login(request, password)
+
+
+@app.get("/logout")
+def logout():
+    return auth.handle_logout()
+
+
+@app.get("/api/me")
+def me():
+    return {"login": bool(auth.PASSWORD)}
 
 
 @app.get("/")
