@@ -317,10 +317,16 @@ class Practice {
     this.endTimer = setTimeout(() => this.stop(true), (to - from + lead + 0.3) * 1000);
   }
 
-  setShift(k) {
+  setShift(k) { this.setPart(this.target.notes, k, k); }
+
+  // notes: the part to sing (melody or a harmony line), before shifting.
+  // shift: semitones added to those notes. contourShift: where to draw the original melody line.
+  setPart(notes, shift, contourShift = shift) {
     if (this.playing) return;
-    this.shift = k;
-    this.notes = this.target.notes.map(n => ({ ...n, midi: n.midi + k, frames: [], result: null }));
+    this.target.notes = notes;
+    this.shift = shift;
+    this.contourShift = contourShift;
+    this.notes = notes.map(n => ({ ...n, midi: n.midi + shift, frames: [], result: null }));
     this.trail = [];
   }
 
@@ -417,7 +423,7 @@ class Practice {
       for (let i = i0; i <= i1; i++) {
         const v = tg.contour[i];
         if (v === null) { pen = false; continue; }
-        const X = x(i * tg.hop), Y = y(v + this.shift);
+        const X = x(i * tg.hop), Y = y(v + (this.contourShift ?? this.shift));
         pen ? g.lineTo(X, Y) : g.moveTo(X, Y); pen = true;
       }
       g.stroke();
@@ -460,8 +466,11 @@ class Practice {
 
   viewRange() {
     const s = this.opts.settings;
-    let lo = (this.target.range?.[0] ?? s.rangeLow) + (this.target.range ? this.shift : 0);
-    let hi = (this.target.range?.[1] ?? s.rangeHigh) + (this.target.range ? this.shift : 0);
+    let lo = s.rangeLow, hi = s.rangeHigh;
+    if (this.notes.length) {
+      const m = this.notes.map(n => n.midi).sort((a, b) => a - b);
+      lo = m[Math.floor(m.length * 0.02)]; hi = m[Math.ceil(m.length * 0.98) - 1];
+    }
     lo -= 3; hi += 3;
     while (hi - lo < 14) { lo--; hi++; }
     return [lo, hi];
@@ -644,15 +653,17 @@ route(/^\/$/, async () => {
     list.innerHTML = songs.length ? songs.map(song => `
       <div class="card song" data-id="${song.id}">
         <div class="grow">
-          <div class="title">${esc(song.title)}</div>
+          <div class="title" title="${esc(song.title)}">${esc(song.title)}</div>
           <div class="small dim">${song.duration ? fmtTime(song.duration) + ' · ' : ''}${song.note_low != null ? `${noteName(song.note_low)}–${noteName(song.note_high)}` + fitHint(song, s) : esc(song.stage || '')}</div>
           ${song.error ? `<div class="err">${esc(song.error)}</div>` : ''}
         </div>
+        <div class="actions">
         <span class="pill ${song.status}">${song.status === 'processing' ? 'working' : song.status}</span>
         ${song.status === 'ready' ? `<a class="btn primary" href="#/song/${song.id}">Sing</a>` : ''}
         ${song.status === 'error' ? `<button data-retry>Retry</button>` : ''}
         <button data-rename title="Rename" aria-label="Rename">✎</button>
         <button data-del class="danger" title="Delete">✕</button>
+        </div>
       </div>`).join('') : `<p class="dim">No songs yet. Paste a YouTube link above.</p>`;
     const busy = songs.some(x => x.status === 'queued' || x.status === 'processing');
     clearTimeout(timer); if (busy) timer = setTimeout(refresh, 3000);
@@ -693,12 +704,11 @@ route(/^\/$/, async () => {
 }, 'songs');
 
 function fitHint(song, s) {
-  const lo = song.note_low, hi = song.note_high;
-  if (lo == null) return '';
-  if (lo >= s.rangeLow && hi <= s.rangeHigh) return ' · fits your range';
-  if (lo - 12 >= s.rangeLow - 1 && hi - 12 <= s.rangeHigh + 1) return ' · you’ll sing it an octave down';
-  if (lo + 12 >= s.rangeLow - 1 && hi + 12 <= s.rangeHigh + 1) return ' · you’ll sing it an octave up';
-  return ' · outside your range';
+  if (song.note_low == null) return '';
+  const k = song.best_shift ?? 0, pct = Math.round(100 * (song.fit ?? 0));
+  if (song.fit == null) return '';
+  if (k === 0 && pct >= 95) return ' · fits your range';
+  return ` · ${k ? `you’ll sing it ${octaveLabel(k)}` : 'original octave'} · ${pct}% in your range`;
 }
 
 // Which octave puts the most of the melody inside your range? Ties go to the original, then down.
@@ -720,36 +730,73 @@ const OCT_KEY = id => `vl-octave-${id}`;
 function savedOctave(id) { try { return localStorage.getItem(OCT_KEY(id)) || 'auto'; } catch { return 'auto'; } }
 function saveOctave(id, v) { try { localStorage.setItem(OCT_KEY(id), v); } catch { /* ignore */ } }
 
+// Keys and harmony. Harmony moves each melody note a number of steps along the song's
+// scale (a third = 2 steps), so it stays in key; notes outside the scale keep their offset.
+const KEY_NAMES = { major: ['C', 'D♭', 'D', 'E♭', 'E', 'F', 'F♯', 'G', 'A♭', 'A', 'B♭', 'B'],
+                    minor: ['C', 'C♯', 'D', 'E♭', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'B♭', 'B'] };
+const keyName = k => k ? `${KEY_NAMES[k.mode][((k.tonic % 12) + 12) % 12]} ${k.mode}` : '…';
+const SCALES = { major: [0, 2, 4, 5, 7, 9, 11], minor: [0, 2, 3, 5, 7, 8, 10] };
+const PARTS = {
+  melody: { label: 'Melody', steps: 0 },
+  up3:    { label: 'Harmony: a third above', steps: 2 },
+  down3:  { label: 'Harmony: a third below', steps: -2 },
+  down5:  { label: 'Harmony: a fifth below', steps: -4 },
+  down6:  { label: 'Harmony: a sixth below', steps: -5 },
+};
+function harmonise(notes, key, steps) {
+  if (!steps) return notes;
+  const sc = SCALES[key.mode];
+  return notes.map(n => {
+    const rel = n.midi - key.tonic;
+    const oct = Math.floor(rel / 12), pc = rel - oct * 12;
+    let deg = 6; while (sc[deg] > pc) deg--;          // scale step at or below this note
+    const off = pc - sc[deg];                         // 1 if the note is outside the scale
+    const a = oct * 7 + deg + steps;
+    const o2 = Math.floor(a / 7), d2 = a - o2 * 7;
+    return { ...n, midi: key.tonic + o2 * 12 + sc[d2] + off };
+  });
+}
+const PREF_KEY = (id, what) => `vl-${what}-${id}`;
+function songPref(id, what, dflt) { try { return localStorage.getItem(PREF_KEY(id, what)) ?? dflt; } catch { return dflt; } }
+function setSongPref(id, what, v) { try { localStorage.setItem(PREF_KEY(id, what), v); } catch { /* ignore */ } }
+
 // ---- sing a song
 route(/^\/song\/([0-9a-f]{12})$/, async id => {
   const [song, an, s] = await Promise.all([api(`/api/songs/${id}`), api(`/api/songs/${id}/analysis`), settings()]);
   const firstIn = Math.max(0, Math.floor((an.notes[0]?.t0 ?? 0) - 3));   // skip a long intro
-  const autoShift = bestOctave(an.notes, s);
-  const octChoice = () => { const v = $('#oct').value; return v === 'auto' ? autoShift : Number(v); };
+  // What you sing = melody or a harmony line, moved by the music's key shift, then by whole octaves.
+  let key = an.key || null;
+  let part = songPref(id, 'part', 'melody'); if (!PARTS[part]) part = 'melody';
+  let tr = Number(songPref(id, 'tr', '0')) || 0;
+  let autoShift = 0;
+  const trLabel = n => n === 0 ? 'Original key' : `${n > 0 ? '+' : '−'}${Math.abs(n)} semitone${Math.abs(n) > 1 ? 's' : ''}${key ? ` (${keyName({ ...key, tonic: key.tonic + n })})` : ''}`;
   view.innerHTML = `
-    <div class="row"><h1 class="grow"><span id="songTitle">${esc(song.title)}</span> <button id="rename" title="Rename" aria-label="Rename" style="font-size:14px;padding:4px 8px;vertical-align:middle">✎</button></h1><span class="dim small">${Math.abs(an.tuning || 0) >= 10 ? `Recording is tuned ${an.tuning > 0 ? '+' : ''}${an.tuning}¢ from A440; targets follow it.` : ''}</span><span class="dim small" id="loadmsg">Loading audio…</span></div>
-    <div class="stage" id="stage" style="height:min(56vh,480px)"></div>
+    <div class="row"><h1 class="grow"><span id="songTitle">${esc(song.title)}</span> <button id="rename" title="Rename" aria-label="Rename" style="font-size:14px;padding:4px 8px;vertical-align:middle">✎</button></h1><span class="dim small" id="loadmsg">Loading audio…</span></div>
+    <div class="stage" id="stage" style="height:min(52vh,460px)"></div>
     <div class="controls">
       <button class="primary" id="play" disabled>▶ Sing</button>
       <button id="restart" title="Back to section start">⏮</button>
-      <label>From <input type="text" id="from" size="5" value="${fmtTime(firstIn)}"></label>
-      <label>To <input type="text" id="to" size="5" value="${fmtTime(an.duration)}"></label>
+      <label><input type="checkbox" id="loop"> Loop</label>
+      <label>From <input type="text" id="from" size="4" value="${fmtTime(firstIn)}"></label>
+      <label>To <input type="text" id="to" size="4" value="${fmtTime(an.duration)}"></label>
       <button id="setA" title="Set section start to the playhead">[ here</button>
       <button id="setB" title="Set section end to the playhead">here ]</button>
-      <label><input type="checkbox" id="loop"> Loop</label>
+    </div>
+    <div class="card opts">
+      <label>Part <select id="part">${Object.entries(PARTS).map(([k, v]) => `<option value="${k}">${v.label}</option>`).join('')}</select></label>
+      <label>Sing it <select id="oct"></select></label>
+      <label>Music key <select id="tr"></select></label>
+      <label>Song key <select id="key"></select></label>
+      <p class="dim small span" id="octInfo"></p>
     </div>
     <div class="controls">
       <label>Music <input type="range" id="vAcc" min="0" max="1.2" step="0.05" value="0.9"></label>
       <label>Guide vocal <input type="range" id="vVoc" min="0" max="1.2" step="0.05" value="0.3"></label>
-      <label>Sing it <select id="oct">
-        <option value="auto">Best fit for my range (${octaveLabel(autoShift)})</option>
-        ${OCTAVE_CHOICES.slice().sort((a, b) => b - a).map(k => `<option value="${k}">${k === 0 ? 'Original octave' : octaveLabel(k)[0].toUpperCase() + octaveLabel(k).slice(1)}</option>`).join('')}
-      </select></label>
-      <span class="dim small" id="octInfo"></span>
       <label><input type="checkbox" id="octFree" ${s.octaveFree ? 'checked' : ''}> Any octave counts</label>
       <label><input type="checkbox" id="contour" checked> Show melody line</label>
     </div>
     <div class="legend small"><span><i style="background:var(--green)"></i>within ${s.greenCents}¢</span><span><i style="background:var(--amber)"></i>within ${s.amberCents}¢</span><span><i style="background:var(--red)"></i>off</span><span>Drag the track to move around when stopped. Headphones work best.</span></div>
+    ${Math.abs(an.tuning || 0) >= 10 ? `<p class="dim small">Recording is tuned ${an.tuning > 0 ? '+' : ''}${an.tuning}¢ from A440; targets follow it.</p>` : ''}
     <div id="res"></div>`;
   const stage = $('#stage');
   const parseT = v => { const p = String(v).split(':').map(Number); return p.length === 2 ? p[0] * 60 + p[1] : p[0] || 0; };
@@ -758,27 +805,76 @@ route(/^\/song\/([0-9a-f]{12})$/, async id => {
   const P = new Practice(stage, { ...an, duration: an.duration }, { buffers: {} }, {
     settings: s, volumes: vols, sectionRef: sec, showContour: () => $('#contour').checked, start: firstIn,
   });
-  // Octave: the music and guide vocal stay at the original pitch; only your target notes move.
-  $('#oct').value = savedOctave(id);
-  if (![...$('#oct').options].some(o => o.value === $('#oct').value)) $('#oct').value = 'auto';
-  function applyOctave() {
-    const k = octChoice();
-    P.setShift(k);
-    const [lo, hi] = an.range || [null, null];
-    $('#octInfo').textContent = lo == null ? '' :
-      `Your part ${noteName(lo + k)}–${noteName(hi + k)} · your range ${noteName(s.rangeLow)}–${noteName(s.rangeHigh)}`;
-  }
-  applyOctave();
-  $('#oct').onchange = () => {
-    if (P.playing) { toast('Stop first to change octave'); $('#oct').value = savedOctave(id); return; }
-    saveOctave(id, $('#oct').value); applyOctave(); $('#res').innerHTML = '';
-  };
   cleanup = () => { P.destroy(); stopMic(); };
-  try {
-    const [accomp, vocals] = await Promise.all([loadBuffer(`/media/songs/${id}/accompaniment.mp3`), loadBuffer(`/media/songs/${id}/vocals.mp3`)]);
-    P.audio.buffers = { accomp, vocals };
-    $('#loadmsg').textContent = ''; $('#play').disabled = false;
-  } catch (e) { $('#loadmsg').textContent = 'Audio failed to load: ' + e.message; }
+
+  // ---- the part you sing
+  const octChoice = () => { const v = $('#oct').value; return v === 'auto' ? autoShift : Number(v); };
+  function fillKeySelects() {
+    $('#tr').innerHTML = Array.from({ length: 15 }, (_, i) => 7 - i).map(n => `<option value="${n}">${trLabel(n)}</option>`).join('');
+    $('#tr').value = String(tr);
+    $('#key').innerHTML = !key ? '<option>Finding the key…</option>' :
+      ['major', 'minor'].flatMap(mode => KEY_NAMES[mode].map((_, t) => ({ tonic: t, mode })))
+        .map(k => `<option value="${k.tonic}:${k.mode}">${keyName(k)}${key.detected && k.tonic === key.tonic && k.mode === key.mode ? ' (detected)' : ''}</option>`).join('')
+        + (key.detected ? '' : '<option value="detect">Detect it again</option>');
+    if (key) $('#key').value = `${key.tonic}:${key.mode}`;
+    $('#key').disabled = !key;
+    $('#part').disabled = !key;
+    $('#part').value = key ? part : 'melody';
+  }
+  function applyPart() {
+    const base = part === 'melody' || !key ? an.notes : harmonise(an.notes, key, PARTS[part].steps);
+    const moved = base.map(n => ({ ...n, midi: n.midi + tr }));
+    autoShift = bestOctave(moved, s);
+    const keep = savedOctave(id);
+    $('#oct').innerHTML = `<option value="auto">Best fit for my range (${octaveLabel(autoShift)})</option>` +
+      OCTAVE_CHOICES.slice().sort((a, b) => b - a).map(k => `<option value="${k}">${k === 0 ? 'Original octave' : octaveLabel(k)[0].toUpperCase() + octaveLabel(k).slice(1)}</option>`).join('');
+    $('#oct').value = [...$('#oct').options].some(o => o.value === keep) ? keep : 'auto';
+    const k = octChoice();
+    P.setPart(base, tr + k, tr + k);
+    const ms = P.notes.map(n => n.midi).sort((x, y) => x - y);
+    const total = P.notes.reduce((a, n) => a + n.t1 - n.t0, 0) || 1;
+    const inside = P.notes.reduce((a, n) => a + (n.midi >= s.rangeLow && n.midi <= s.rangeHigh ? n.t1 - n.t0 : 0), 0);
+    $('#octInfo').textContent = !ms.length ? '' :
+      `Your part ${noteName(ms[Math.floor(ms.length * 0.03)])}–${noteName(ms[Math.ceil(ms.length * 0.97) - 1])} · your range ${noteName(s.rangeLow)}–${noteName(s.rangeHigh)} · ${Math.round(100 * inside / total)}% inside it`;
+    $('#res').innerHTML = '';
+  }
+  const busy = () => { if (P.playing) { toast('Stop first, then change this'); return true; } return false; };
+  $('#part').onchange = () => { if (busy()) { $('#part').value = part; return; } part = $('#part').value; setSongPref(id, 'part', part); applyPart(); };
+  $('#oct').onchange = () => { if (busy()) { $('#oct').value = savedOctave(id); return; } saveOctave(id, $('#oct').value); applyPart(); };
+  $('#key').onchange = async () => {
+    if (busy()) { fillKeySelects(); return; }
+    const v = $('#key').value;
+    try {
+      key = await api(`/api/songs/${id}/key`, { method: 'PUT', json: v === 'detect' ? { reset: true } : { tonic: +v.split(':')[0], mode: v.split(':')[1] } });
+    } catch (e) { toast(e.message); }
+    fillKeySelects(); applyPart();
+  };
+
+  // ---- audio, in whichever key is chosen (shifted copies are made on the server once, then cached)
+  let audioReq = 0;
+  async function loadAudio() {
+    const mine = ++audioReq;
+    $('#play').disabled = true;
+    $('#loadmsg').textContent = tr ? 'Shifting the music to the new key (first time takes a few seconds)…' : 'Loading audio…';
+    try {
+      let urls = { accompaniment: `/media/songs/${id}/accompaniment.mp3`, vocals: `/media/songs/${id}/vocals.mp3` };
+      if (tr) urls = await api(`/api/songs/${id}/transpose`, { method: 'POST', json: { semitones: tr } });
+      const [accomp, vocals] = await Promise.all([loadBuffer(urls.accompaniment), loadBuffer(urls.vocals)]);
+      if (mine !== audioReq) return;
+      P.audio.buffers = { accomp, vocals };
+      $('#loadmsg').textContent = ''; $('#play').disabled = false;
+    } catch (e) { if (mine === audioReq) $('#loadmsg').textContent = 'Audio failed to load: ' + e.message; }
+  }
+  $('#tr').onchange = () => {
+    if (busy()) { $('#tr').value = String(tr); return; }
+    tr = Number($('#tr').value); setSongPref(id, 'tr', String(tr)); applyPart(); loadAudio();
+  };
+
+  fillKeySelects(); applyPart(); loadAudio();
+  if (!key) {
+    api(`/api/songs/${id}/key`).then(k => { key = k; fillKeySelects(); applyPart(); })
+      .catch(() => { $('#key').innerHTML = '<option>Key unknown</option>'; });
+  }
 
   $('#rename').onclick = async () => {
     const name = prompt('Song name', song.title);
@@ -803,7 +899,6 @@ route(/^\/song\/([0-9a-f]{12})$/, async id => {
     playBtn.textContent = '■ Stop'; $('#res').innerHTML = '';
     try { await P.play({ from: start, to }); } catch (e) { playBtn.textContent = '▶ Sing'; return toast(e.message, 6000); }
   }
-  P.opts.onEnd = null;
   const origStop = P.stop.bind(P);
   P.stop = async (finished) => {
     const res = await origStop(finished);
@@ -811,8 +906,12 @@ route(/^\/song\/([0-9a-f]{12})$/, async id => {
     playBtn.textContent = '▶ Sing';
     $('#res').innerHTML = resultsHTML(res, s); bindLatencyButton($('#res'));
     if (res.score !== null && res.notes.length >= 4) {
-      const k = P.shift;
-      saveRun('song', id, song.title + (k ? ` (${octaveLabel(k)})` : ''), res, { shift: k }).catch(e => toast('Couldn’t save run: ' + e.message));
+      const k = P.shift - tr;
+      const bits = [part !== 'melody' ? PARTS[part].label.replace('Harmony: ', '') : null,
+        tr ? `${tr > 0 ? '+' : '−'}${Math.abs(tr)} st` : null, k ? octaveLabel(k) : null].filter(Boolean);
+      saveRun('song', id, song.title + (bits.length ? ` (${bits.join(', ')})` : ''), res,
+        { shift: P.shift, part, transpose: tr, octave: k, key })
+        .catch(e => toast('Couldn’t save run: ' + e.message));
     }
     if (finished && $('#loop').checked) { P.pos = sec().from; setTimeout(go, 1200); }
     else if (finished) P.pos = sec().from;
@@ -1076,7 +1175,7 @@ route(/^\/history$/, async () => {
     <div class="card"><div class="heat" id="heat"></div><p class="small dim">Average note score across songs and drills. Darker cells haven't been sung enough to say.</p></div>
     ${Object.keys(st.ear).length ? `<h2>Ear training</h2><div class="card"><table><tr><th>Item</th><th>Tries</th><th>Correct</th></tr>${Object.entries(st.ear).sort((a, b) => a[1].avg - b[1].avg).map(([k, v]) => `<tr><td>${esc(k)}</td><td>${v.n}</td><td>${Math.round(v.avg * 100)}%</td></tr>`).join('')}</table></div>` : ''}
     <h2>Recent runs</h2>
-    <div class="card"><table id="runs"><tr><th>When</th><th>What</th><th>Score</th><th></th></tr>
+    <div class="card table-wrap"><table id="runs"><tr><th>When</th><th>What</th><th>Score</th><th></th></tr>
     ${runs.map(r => `<tr data-id="${r.id}"><td class="small">${fmtDate(r.created)}</td><td>${esc(r.title || r.ref)} <span class="dim small">${r.kind}</span></td><td>${r.score == null ? '–' : Math.round(r.score) + '%'}</td>
       <td class="row" style="justify-content:flex-end">${r.take ? `<button data-play="${esc(r.take)}">▶ Take</button>` : ''}<button data-del class="danger">✕</button></td></tr>`).join('')}
     </table>${runs.length ? '' : '<p class="dim">Nothing yet. Sing something.</p>'}</div>
@@ -1152,4 +1251,5 @@ route(/^\/settings$/, async () => {
 }, 'settings');
 
 api('/api/me').then(m => { if (m.login) $('#logout').hidden = false; }).catch(() => {});
+$('#logout').onclick = e => { if (!confirm('Sign out of Vocal Lab on this device?')) e.preventDefault(); };
 render();

@@ -7,7 +7,11 @@ A self-hosted singing trainer modelled on vocalify.me, with one big addition: pa
 - **Songs from YouTube or files.** yt-dlp downloads the audio, Demucs (`htdemucs`) splits vocals from accompaniment, CREPE tracks the vocal pitch and turns it into notes. The recording's tuning is measured, so songs that aren't at A440 still grade fairly.
 - **Live pitch feedback.** Your voice is drawn over the target notes, 100 times a second, coloured green / amber / red by how many cents you're off. The HUD says "aim higher" or "aim lower".
 - **Practice controls.** Pick a section (or set it from the playhead), loop it, mix the accompaniment and guide vocal, and drag the track to move around.
-- **Sing it in your octave.** If a song sits outside your range, the targets move an octave (or two) to fit while the music and guide vocal stay at their original pitch, so you sing along an octave below or above. It picks the best fit automatically; you can choose per song and it's remembered. "Any octave counts" is still there if you'd rather be scored in whatever octave you sing.
+- **Sing it your way.** Each song has a part picker and key controls, remembered per song:
+  - **Part:** the melody, or a harmony line a third above, or a third, fifth or sixth below. Harmonies follow the song's key (detected automatically; you can correct it), so they stay in key.
+  - **Sing it:** move your notes an octave or two. It picks the best fit for your range; the music stays put, so you sing in octaves with the singer.
+  - **Music key:** shift the backing track and guide vocal up to 7 semitones either way to suit your voice. The first time takes a few seconds while the server makes a shifted copy (Rubber Band, so the tempo doesn't change); after that it's instant.
+  - "Any octave counts" is still there if you'd rather be scored in whatever octave you sing.
 - **Grading.** Each note is scored on onset, transition and hold. Scoops into a note aren't penalised. Results show your score, notes landed, whether you sit sharp or flat, and your weakest notes.
 - **Latency.** A 10-second timing check at the start of each session measures your headphone and mic delay (sing "da" with a few beeps), saved per device. After each run it also checks whether your pitch line fits better shifted in time and offers a one-tap correction.
 - **Warm-ups.** Five-note scale, arpeggio, thirds, octave leap, long tone, minor and nine-note scales, plus chained series. Each climbs through your range semitone by semitone and back down.

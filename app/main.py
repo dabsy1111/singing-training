@@ -62,9 +62,55 @@ class SongPatch(BaseModel):
     title: str | None = None
 
 
+class KeyIn(BaseModel):
+    tonic: int | None = None
+    mode: str | None = None
+    reset: bool = False
+
+
+class TransposeIn(BaseModel):
+    semitones: int
+
+
+_fit_cache: dict[str, tuple[float, list]] = {}
+
+
+def _note_summary(song_id):
+    p = pipeline.song_dir(song_id) / "analysis.json"
+    if not p.exists():
+        return None
+    mt = p.stat().st_mtime
+    c = _fit_cache.get(song_id)
+    if not c or c[0] != mt:
+        notes = json.loads(p.read_text()).get("notes", [])
+        c = (mt, [(n["midi"], n["t1"] - n["t0"]) for n in notes])
+        _fit_cache[song_id] = c
+    return c[1]
+
+
+def best_octave(notes, lo, hi):
+    """Same rule as the song page: least time outside the range; ties go to the original, then down."""
+    best = None
+    for k in (0, -12, 12, -24, 24):
+        cost = sum(dur * (lo - (m + k) if m + k < lo else (m + k) - hi if m + k > hi else 0) for m, dur in notes)
+        if best is None or cost < best[1] - 1e-9:
+            best = (k, cost)
+    k = best[0]
+    total = sum(d for _, d in notes) or 1
+    inside = sum(d for m, d in notes if lo <= m + k <= hi)
+    return k, inside / total
+
+
 @app.get("/api/songs")
 def songs():
-    return db.list_songs()
+    rows = db.list_songs()
+    st = db.get_settings()
+    for r in rows:
+        if r["status"] == "ready":
+            notes = _note_summary(r["id"])
+            if notes:
+                r["best_shift"], r["fit"] = best_octave(notes, st["rangeLow"], st["rangeHigh"])
+    return rows
 
 
 @app.post("/api/songs/youtube")
@@ -148,9 +194,47 @@ def analysis(song_id: str):
     return FileResponse(p, media_type="application/json")
 
 
+@app.get("/api/songs/{song_id}/key")
+def song_key(song_id: str):
+    p = pipeline.song_dir(song_id) / "analysis.json"
+    if not p.exists():
+        raise HTTPException(404, "Not analysed yet")
+    an = json.loads(p.read_text())
+    if "key" not in an:   # songs added before key detection existed
+        an["key"] = pipeline.detect_key(pipeline.song_dir(song_id) / "accompaniment.mp3", an.get("notes", []))
+        p.write_text(json.dumps(an, separators=(",", ":")))
+    return an["key"]
+
+
+@app.put("/api/songs/{song_id}/key")
+def set_song_key(song_id: str, body: KeyIn):
+    p = pipeline.song_dir(song_id) / "analysis.json"
+    if not p.exists():
+        raise HTTPException(404, "Not analysed yet")
+    an = json.loads(p.read_text())
+    if body.reset:
+        an["key"] = pipeline.detect_key(pipeline.song_dir(song_id) / "accompaniment.mp3", an.get("notes", []))
+    else:
+        if body.tonic is None or not 0 <= body.tonic <= 11 or body.mode not in ("major", "minor"):
+            raise HTTPException(400, "Key needs a tonic 0-11 and a mode of major or minor")
+        an["key"] = {"tonic": body.tonic, "mode": body.mode, "detected": False}
+    p.write_text(json.dumps(an, separators=(",", ":")))
+    return an["key"]
+
+
+@app.post("/api/songs/{song_id}/transpose")
+def transpose(song_id: str, body: TransposeIn):
+    s = db.get_song(song_id)
+    if not s or s["status"] != "ready":
+        raise HTTPException(404, "Song isn't ready")
+    if not -7 <= body.semitones <= 7 or body.semitones == 0:
+        raise HTTPException(400, "Choose between -7 and +7 semitones")
+    return pipeline.transposed(song_id, body.semitones)
+
+
 @app.get("/media/songs/{song_id}/{name}")
 def song_media(song_id: str, name: str):
-    if name not in ("accompaniment.mp3", "vocals.mp3", "original.mp3") or not re.fullmatch(r"[0-9a-f]{12}", song_id):
+    if not re.fullmatch(r"(accompaniment|vocals|original)(\.t-?[1-7])?\.mp3", name) or not re.fullmatch(r"[0-9a-f]{12}", song_id):
         raise HTTPException(404)
     p = pipeline.song_dir(song_id) / name
     if not p.exists():

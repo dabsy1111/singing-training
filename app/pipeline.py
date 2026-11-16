@@ -86,10 +86,7 @@ def process(song_id: str, job: dict):
     if not src.exists():
         if job.get("url"):
             stage(song_id, "Downloading from YouTube")
-            title, duration = fetch_youtube(job["url"], d)
-            cur = db.get_song(song_id) or {}
-            if cur.get("title") in (None, "", "Fetching title…"):   # keep a rename made meanwhile
-                db.update_song(song_id, title=title)
+            title, duration = fetch_youtube(job["url"], d, song_id)
             db.update_song(song_id, duration=duration)
         elif job.get("upload"):
             stage(song_id, "Converting upload")
@@ -100,7 +97,8 @@ def process(song_id: str, job: dict):
 
     duration = probe_duration(src)
     if duration > MAX_MINUTES * 60:
-        raise PipelineError(f"Track is {duration/60:.1f} min; the limit is {MAX_MINUTES:g} min (MAX_SONG_MINUTES)")
+        raise PipelineError(f"This track is {_mins(duration)} long. Songs are limited to {MAX_MINUTES:g} min "
+                            f"(raise MAX_SONG_MINUTES in the stack's .env to allow longer).")
     db.update_song(song_id, duration=duration)
 
     vocals, accomp = d / "vocals.wav", d / "no_vocals.wav"
@@ -123,6 +121,13 @@ def process(song_id: str, job: dict):
         for f in (vocals, accomp):
             f.unlink(missing_ok=True)
 
+    stage(song_id, "Working out the key")
+    try:
+        analysis["key"] = detect_key(d / "accompaniment.mp3", analysis["notes"])
+        (d / "analysis.json").write_text(json.dumps(analysis, separators=(",", ":")))
+    except Exception:  # noqa: BLE001 - key is a nice-to-have; the song still works without it
+        log.exception("key detection failed for %s", song_id)
+
     lo, hi = analysis.get("range") or (None, None)
     db.update_song(song_id, status="ready", stage=None, error=None, note_low=lo, note_high=hi)
 
@@ -131,7 +136,7 @@ def process(song_id: str, job: dict):
 # fetch
 # --------------------------------------------------------------------------
 
-def fetch_youtube(url: str, d: Path):
+def fetch_youtube(url: str, d: Path, song_id: str | None = None):
     import yt_dlp
 
     opts = {
@@ -140,30 +145,52 @@ def fetch_youtube(url: str, d: Path):
         "outtmpl": str(d / "download.%(ext)s"),
         "quiet": True,
         "no_warnings": True,
-        "match_filter": yt_dlp.utils.match_filter_func(f"duration <= {int(MAX_MINUTES*60)}"),
     }
     cookies = os.environ.get("YTDLP_COOKIES", str(DATA_DIR / "cookies.txt"))
     if cookies and Path(cookies).exists():
         opts["cookiefile"] = cookies
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(url, download=True)
+            # Look first, so a too-long video fails fast with its real title and length.
+            info = ydl.extract_info(url, download=False)
+            if info is None:
+                raise PipelineError("YouTube returned nothing for that link")
+            title = info.get("title") or "Untitled"
+            if song_id:
+                cur = db.get_song(song_id) or {}
+                if cur.get("title") in (None, "", "Fetching title…"):
+                    db.update_song(song_id, title=title)
+            dur = float(info.get("duration") or 0)
+            if dur > MAX_MINUTES * 60:
+                raise PipelineError(
+                    f"This video is {_mins(dur)} long. Songs are limited to {MAX_MINUTES:g} min "
+                    f"(raise MAX_SONG_MINUTES in the stack's .env to allow longer).")
+            if info.get("is_live"):
+                raise PipelineError("That's a live stream that's still going; try again once it's finished.")
+            ydl.process_ie_result(info, download=True)
     except yt_dlp.utils.DownloadError as e:
         msg = str(e)
         if "not a bot" in msg or "Sign in" in msg:
             raise PipelineError(
                 "YouTube wants a sign-in check for this server. Export your YouTube cookies to "
                 "data/cookies.txt (see README) and press Retry.") from e
+        if "unavailable" in msg.lower() or "private" in msg.lower():
+            raise PipelineError("YouTube says that video isn't available (private, removed or region-locked).") from e
+        if "truncated" in msg.lower() or "Unsupported URL" in msg or "Incomplete" in msg:
+            raise PipelineError("That link doesn't look like a complete YouTube video link.") from e
         raise PipelineError(f"yt-dlp couldn't download it: {msg}") from e
-    if info is None:
-        raise PipelineError("yt-dlp returned nothing (longer than the time limit?)")
     files = sorted(d.glob("download.*"))
     if not files:
-        raise PipelineError(f"Video is longer than {MAX_MINUTES:g} min or has no audio")
+        raise PipelineError("The download finished but there was no audio in it.")
     to_wav(files[0], d / "source.wav")
     for f in files:
         f.unlink(missing_ok=True)
-    return info.get("title") or "Untitled", float(info.get("duration") or 0)
+    return title, dur
+
+
+def _mins(sec: float) -> str:
+    h, m = divmod(int(round(sec / 60)), 60)
+    return f"{h} h {m} min" if h else f"{m} min"
 
 
 def to_wav(src: Path, dst: Path):
@@ -355,3 +382,66 @@ def segment_notes(midi, min_len=0.09, split_cents=60, settle_frames=4, merge_gap
         else:
             merged.append(nt)
     return [nt for nt in merged if nt["t1"] - nt["t0"] >= min_len]
+
+
+# --------------------------------------------------------------------------
+# key
+# --------------------------------------------------------------------------
+
+# Krumhansl-Kessler key profiles
+_MAJOR = np.array([6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88])
+_MINOR = np.array([6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17])
+
+
+def detect_key(accompaniment: Path, notes: list) -> dict:
+    """Estimate the key from the backing track's harmony plus the sung melody."""
+    import librosa
+
+    y, sr = librosa.load(str(accompaniment), sr=22050, mono=True)
+    chroma = librosa.feature.chroma_cqt(y=y, sr=sr, hop_length=4096).sum(axis=1)
+    profile = chroma / (chroma.sum() or 1)
+    mel = np.zeros(12)
+    for nt in notes:
+        mel[nt["midi"] % 12] += nt["t1"] - nt["t0"]
+    if mel.sum():
+        profile = profile + 0.5 * mel / mel.sum()
+    best = None
+    for mode, prof in (("major", _MAJOR), ("minor", _MINOR)):
+        for tonic in range(12):
+            r = float(np.corrcoef(profile, np.roll(prof, tonic))[0, 1])
+            if best is None or r > best["confidence"]:
+                best = {"tonic": tonic, "mode": mode, "confidence": round(r, 3)}
+    best["detected"] = True
+    return best
+
+
+# --------------------------------------------------------------------------
+# transposed audio (made on request, cached next to the originals)
+# --------------------------------------------------------------------------
+
+_tlocks: dict[str, threading.Lock] = {}
+_tlocks_guard = threading.Lock()
+
+
+def transposed(song_id: str, semitones: int) -> dict:
+    from concurrent.futures import ThreadPoolExecutor
+
+    d = song_dir(song_id)
+    with _tlocks_guard:
+        lock = _tlocks.setdefault(f"{song_id}:{semitones}", threading.Lock())
+
+    def one(stem, extra):
+        name = f"{stem}.t{semitones}.mp3"
+        dst = d / name
+        if not dst.exists():
+            tmp = d / f".{name}"
+            ratio = 2 ** (semitones / 12)
+            run(["ffmpeg", "-y", "-v", "error", "-i", str(d / f"{stem}.mp3"),
+                 "-af", f"rubberband=pitch={ratio:.6f}:pitchq=quality{extra}",
+                 "-ar", str(PLAYBACK_RATE), "-b:a", "128k" if stem == "accompaniment" else "96k",
+                 "-f", "mp3", str(tmp)])
+            tmp.rename(dst)
+        return stem, f"/media/songs/{song_id}/{name}"
+
+    with lock, ThreadPoolExecutor(2) as pool:   # music and guide vocal side by side
+        return dict(pool.map(lambda a: one(*a), (("accompaniment", ""), ("vocals", ":formant=preserved"))))
