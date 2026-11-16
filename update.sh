@@ -1,9 +1,10 @@
 #!/bin/sh
-# Pull the latest code and rebuild. Your songs, takes and settings in data/ are kept.
+# Pull the newest image built by GitHub and restart. Your songs, takes and settings in data/ are kept.
+# (Dockge users can just press Update instead.)
 set -e
 cd "$(dirname "$0")"
-git pull --ff-only
-docker compose pull caddy
-docker compose up -d --build
+[ -d .git ] && git pull --ff-only
+docker compose pull
+docker compose up -d
 docker image prune -f >/dev/null
 echo "Vocal Lab is up to date."

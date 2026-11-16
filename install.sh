@@ -1,5 +1,5 @@
 #!/bin/sh
-# First-time setup: creates .env with this machine's LAN IP and starts everything.
+# First-time setup without Dockge: creates .env with this machine's LAN IP and starts everything.
 set -e
 cd "$(dirname "$0")"
 if [ ! -f .env ]; then
@@ -9,6 +9,7 @@ if [ ! -f .env ]; then
   echo "Created .env with VL_HOST=${IP:-<edit me>}"
 fi
 mkdir -p data
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 . ./.env
 echo "Done. Open https://${VL_HOST}:8443 on your phone or PC (accept the certificate warning the first time)."

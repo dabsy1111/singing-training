@@ -1,0 +1,48 @@
+# Vocal Lab. Paste this into a new Dockge stack, add VL_HOST to the stack's .env, and deploy.
+# Updates: press Update in Dockge (pulls the newest image built from GitHub).
+
+services:
+  app:
+    image: ghcr.io/dabsy1111/singing-training:latest
+    container_name: vocal-lab
+    restart: unless-stopped
+    environment:
+      MAX_SONG_MINUTES: ${MAX_SONG_MINUTES:-12}
+      CREPE_MODEL: ${CREPE_MODEL:-tiny}          # tiny (fast) or full (~15x slower on CPU)
+      DEMUCS_MODEL: ${DEMUCS_MODEL:-htdemucs}    # htdemucs, htdemucs_ft or mdx_extra
+      PROCESS_THREADS: ${PROCESS_THREADS:-5}
+      YTDLP_AUTO_UPDATE: ${YTDLP_AUTO_UPDATE:-1}
+    volumes:
+      - ./data:/data
+    ports:
+      # Plain HTTP for the server itself or Tailscale Serve.
+      # Phones and other PCs need the HTTPS port below for microphone access.
+      - "8080:8000"
+
+  caddy:
+    image: caddy:2
+    container_name: vocal-lab-caddy
+    restart: unless-stopped
+    ports:
+      - "8443:443"
+    configs:
+      - source: caddyfile
+        target: /etc/caddy/Caddyfile
+    volumes:
+      - ./caddy-data:/data
+    depends_on:
+      - app
+
+configs:
+  caddyfile:
+    # HTTPS on the LAN using Caddy's own certificate authority.
+    # To add a password, put a basic_auth block above reverse_proxy
+    # (hash from: docker exec vocal-lab-caddy caddy hash-password).
+    content: |
+      https://${VL_HOST:-localhost} {
+        tls internal
+        request_body {
+          max_size 500MB
+        }
+        reverse_proxy app:8000
+      }

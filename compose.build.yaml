@@ -1,0 +1,5 @@
+# Only needed if you change the code and want to build locally instead of pulling from GitHub:
+#   docker compose -f compose.yaml -f compose.build.yaml up -d --build
+services:
+  app:
+    build: .

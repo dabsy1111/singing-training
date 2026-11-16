@@ -18,22 +18,35 @@ There are no accounts. It's one person's trainer on a home network, and everythi
 
 Not built yet, compared with Vocalify: the structured lesson course and the melody editor.
 
-## Install on the OptiPlex
+## Install with Dockge
 
-Needs Docker with the Compose plugin. The image is about 3.4 GB (CPU-only PyTorch plus the Demucs model).
+GitHub builds the app image on every change and publishes it as `ghcr.io/dabsy1111/singing-training`, so the server only downloads it (about 1 GB compressed). Nothing gets built on the OptiPlex.
+
+1. In Dockge, click **+ Compose** and name the stack `vocal-lab`.
+2. Paste the contents of [`compose.yaml`](compose.yaml) into the compose editor.
+3. In the `.env` box below it, add one line with the server's LAN IP:
+   ```
+   VL_HOST=192.168.1.50
+   ```
+4. Click **Deploy**.
+
+Then open:
+
+- On your phone or PC: **https://<server-ip>:8443**
+- On the server itself: http://localhost:8080
+
+**Updating:** press **Update** on the stack in Dockge. It pulls the newest image and restarts. Your songs, takes, history and settings live in the stack's `data/` folder and aren't touched.
+
+Optional settings for the `.env` box (defaults shown): `MAX_SONG_MINUTES=12`, `CREPE_MODEL=tiny`, `DEMUCS_MODEL=htdemucs`, `PROCESS_THREADS=5`, `YTDLP_AUTO_UPDATE=1`.
+
+### Without Dockge
 
 ```bash
 git clone https://github.com/dabsy1111/singing-training.git
 cd singing-training
-./install.sh
+./install.sh     # first time: writes .env with this machine's IP, pulls and starts
+./update.sh      # later: pulls the newest image and restarts
 ```
-
-`install.sh` creates `.env` with the server's LAN IP filled in and starts everything. To change settings later, edit `.env` and run `docker compose up -d`.
-
-The first build takes a while (it downloads PyTorch and the separation model). After that:
-
-- On other devices: **https://<server-ip>:8443**
-- On the server itself: http://localhost:8080
 
 ### Why HTTPS matters
 
@@ -49,10 +62,10 @@ If you use Tailscale, `tailscale serve --bg 8080` on the server gives you a real
 yt-dlp updates itself each time the container starts (`YTDLP_AUTO_UPDATE=1`), because YouTube changes often and old versions break. A home connection normally works without signing in. If a song fails with "YouTube wants a sign-in check":
 
 1. Install a "Get cookies.txt LOCALLY" extension in your browser, open youtube.com while signed in, and export cookies.
-2. Save the file as `data/cookies.txt` in the vocal-lab folder.
+2. Save the file as `data/cookies.txt` in the stack folder (with Dockge, `/opt/stacks/vocal-lab/data/cookies.txt`).
 3. Press Retry on the song.
 
-Songs over 12 minutes are rejected (`MAX_SONG_MINUTES` in `.env`).
+Songs over 12 minutes are rejected (change with `MAX_SONG_MINUTES`).
 
 ### How long processing takes
 
@@ -65,16 +78,13 @@ For a 4-minute song on the i5-9500T, expect about 1–2 minutes for separation a
 - If a song sits an octave away from your voice, tick "Any octave counts".
 - Songs with lots of backing vocals or heavy effects give messier melodies. Clear lead vocals work best.
 
-## Updating and backups
-
-```bash
-cd singing-training
-./update.sh
-```
-
-That pulls the latest code from GitHub and rebuilds. Your `data/` folder and `.env` aren't touched by git, so songs, takes, history and settings survive updates.
+## Backups
 
 Everything you'd want to keep lives in `data/`: the database (`vocal-lab.db`), processed songs, and recorded takes. Back up that folder.
+
+## Changing the code
+
+Push to `main` and the **Build image** workflow publishes a new image within about 10 minutes; then press Update in Dockge. Edits to the README, `compose.yaml` or the scripts don't trigger a build. To build on the server instead (for testing), use `docker compose -f compose.yaml -f compose.build.yaml up -d --build`.
 
 ## Layout
 
