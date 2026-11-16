@@ -87,7 +87,10 @@ def process(song_id: str, job: dict):
         if job.get("url"):
             stage(song_id, "Downloading from YouTube")
             title, duration = fetch_youtube(job["url"], d)
-            db.update_song(song_id, title=title, duration=duration)
+            cur = db.get_song(song_id) or {}
+            if cur.get("title") in (None, "", "Fetching title…"):   # keep a rename made meanwhile
+                db.update_song(song_id, title=title)
+            db.update_song(song_id, duration=duration)
         elif job.get("upload"):
             stage(song_id, "Converting upload")
             to_wav(Path(job["upload"]), src)

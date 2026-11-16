@@ -103,8 +103,12 @@ def song(song_id: str):
 def patch_song(song_id: str, body: SongPatch):
     if not db.get_song(song_id):
         raise HTTPException(404, "No such song")
-    if body.title:
-        db.update_song(song_id, title=body.title.strip()[:200])
+    new = (body.title or "").strip()[:200]
+    if new:
+        old = db.get_song(song_id)["title"]
+        db.update_song(song_id, title=new)
+        db.execute("UPDATE runs SET title = ? || substr(title, ?) WHERE kind='song' AND ref=? AND substr(title, 1, ?) = ?",
+                   (new, len(old) + 1, song_id, len(old), old))
     return db.get_song(song_id)
 
 

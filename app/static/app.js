@@ -651,6 +651,7 @@ route(/^\/$/, async () => {
         <span class="pill ${song.status}">${song.status === 'processing' ? 'working' : song.status}</span>
         ${song.status === 'ready' ? `<a class="btn primary" href="#/song/${song.id}">Sing</a>` : ''}
         ${song.status === 'error' ? `<button data-retry>Retry</button>` : ''}
+        <button data-rename title="Rename" aria-label="Rename">✎</button>
         <button data-del class="danger" title="Delete">✕</button>
       </div>`).join('') : `<p class="dim">No songs yet. Paste a YouTube link above.</p>`;
     const busy = songs.some(x => x.status === 'queued' || x.status === 'processing');
@@ -659,7 +660,14 @@ route(/^\/$/, async () => {
   list.onclick = async e => {
     const card = e.target.closest('.song'); if (!card) return;
     const id = card.dataset.id;
-    if (e.target.closest('[data-del]')) {
+    if (e.target.closest('[data-rename]')) {
+      const cur = card.querySelector('.title').textContent;
+      const name = prompt('Song name', cur);
+      if (name && name.trim() && name.trim() !== cur) {
+        try { await api(`/api/songs/${id}`, { method: 'PATCH', json: { title: name.trim() } }); } catch (err) { toast(err.message); }
+        refresh();
+      }
+    } else if (e.target.closest('[data-del]')) {
       if (!confirm('Delete this song and its audio?')) return;
       try { await api(`/api/songs/${id}`, { method: 'DELETE' }); } catch (err) { toast(err.message); }
       refresh();
@@ -719,7 +727,7 @@ route(/^\/song\/([0-9a-f]{12})$/, async id => {
   const autoShift = bestOctave(an.notes, s);
   const octChoice = () => { const v = $('#oct').value; return v === 'auto' ? autoShift : Number(v); };
   view.innerHTML = `
-    <div class="row"><h1 class="grow">${esc(song.title)}</h1><span class="dim small">${Math.abs(an.tuning || 0) >= 10 ? `Recording is tuned ${an.tuning > 0 ? '+' : ''}${an.tuning}¢ from A440; targets follow it.` : ''}</span><span class="dim small" id="loadmsg">Loading audio…</span></div>
+    <div class="row"><h1 class="grow"><span id="songTitle">${esc(song.title)}</span> <button id="rename" title="Rename" aria-label="Rename" style="font-size:14px;padding:4px 8px;vertical-align:middle">✎</button></h1><span class="dim small">${Math.abs(an.tuning || 0) >= 10 ? `Recording is tuned ${an.tuning > 0 ? '+' : ''}${an.tuning}¢ from A440; targets follow it.` : ''}</span><span class="dim small" id="loadmsg">Loading audio…</span></div>
     <div class="stage" id="stage" style="height:min(56vh,480px)"></div>
     <div class="controls">
       <button class="primary" id="play" disabled>▶ Sing</button>
@@ -772,6 +780,14 @@ route(/^\/song\/([0-9a-f]{12})$/, async id => {
     $('#loadmsg').textContent = ''; $('#play').disabled = false;
   } catch (e) { $('#loadmsg').textContent = 'Audio failed to load: ' + e.message; }
 
+  $('#rename').onclick = async () => {
+    const name = prompt('Song name', song.title);
+    if (!name || !name.trim() || name.trim() === song.title) return;
+    try {
+      const upd = await api(`/api/songs/${id}`, { method: 'PATCH', json: { title: name.trim() } });
+      song.title = upd.title; $('#songTitle').textContent = upd.title;
+    } catch (err) { toast(err.message); }
+  };
   $('#vAcc').oninput = e => { vols.accomp = +e.target.value; P.setVolume('accomp', vols.accomp); };
   $('#vVoc').oninput = e => { vols.vocals = +e.target.value; P.setVolume('vocals', vols.vocals); };
   $('#octFree').onchange = e => { s.octaveFree = e.target.checked; saveSettings({ octaveFree: s.octaveFree }); };
