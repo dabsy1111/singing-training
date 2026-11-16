@@ -17,14 +17,14 @@ services:
     ports:
       # Plain HTTP for the server itself or Tailscale Serve.
       # Phones and other PCs need the HTTPS port below for microphone access.
-      - "8080:8000"
+      - "${VL_HTTP_PORT:-8095}:8000"
 
   caddy:
     image: caddy:2
     container_name: vocal-lab-caddy
     restart: unless-stopped
     ports:
-      - "8443:443"
+      - "${VL_HTTPS_PORT:-8443}:443"
     configs:
       - source: caddyfile
         target: /etc/caddy/Caddyfile
