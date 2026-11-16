@@ -1,0 +1,27 @@
+services:
+  app:
+    build: .
+    image: vocal-lab:latest
+    container_name: vocal-lab
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./data:/data
+    ports:
+      # Plain HTTP. Fine on the server itself (localhost) or behind Tailscale Serve.
+      # Other devices need the HTTPS port below, because browsers only give
+      # microphone access to secure pages.
+      - "8080:8000"
+
+  caddy:
+    image: caddy:2
+    container_name: vocal-lab-caddy
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "8443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy-data:/data
+    depends_on:
+      - app

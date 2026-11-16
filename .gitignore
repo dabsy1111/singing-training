@@ -1,0 +1,4 @@
+data/
+caddy-data/
+.env
+__pycache__/

@@ -1,0 +1,14 @@
+# HTTPS for the LAN with Caddy's own certificate authority.
+# VL_HOST is set in .env: the server's LAN IP (e.g. 192.168.1.50) or a hostname.
+https://{$VL_HOST} {
+	tls internal
+	request_body {
+		max_size 500MB
+	}
+	# Optional password. Generate a hash with:
+	#   docker compose exec caddy caddy hash-password
+	# basic_auth {
+	# 	dan <paste-hash-here>
+	# }
+	reverse_proxy app:8000
+}
