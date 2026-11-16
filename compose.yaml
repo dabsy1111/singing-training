@@ -14,10 +14,7 @@ services:
       YTDLP_AUTO_UPDATE: ${YTDLP_AUTO_UPDATE:-1}
     volumes:
       - ./data:/data
-    ports:
-      # Plain HTTP for the server itself or Tailscale Serve.
-      # Phones and other PCs need the HTTPS port below for microphone access.
-      - "${VL_HTTP_PORT:-8095}:8000"
+    # No ports published: everything goes through Caddy's HTTPS port below.
 
   caddy:
     image: caddy:2

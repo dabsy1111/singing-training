@@ -33,11 +33,10 @@ GitHub builds the app image on every change and publishes it as `ghcr.io/dabsy11
 Then open:
 
 - On your phone or PC: **https://<server-ip>:8443**
-- On the server itself: http://localhost:8095
 
 **Updating:** press **Update** on the stack in Dockge. It pulls the newest image and restarts. Your songs, takes, history and settings live in the stack's `data/` folder and aren't touched.
 
-Optional settings for the `.env` box (defaults shown): `VL_HTTPS_PORT=8443`, `VL_HTTP_PORT=8095`, `MAX_SONG_MINUTES=12`, `CREPE_MODEL=tiny`, `DEMUCS_MODEL=htdemucs`, `PROCESS_THREADS=5`, `YTDLP_AUTO_UPDATE=1`.
+Optional settings for the `.env` box (defaults shown): `VL_HTTPS_PORT=8443` (change it if that port is taken), `MAX_SONG_MINUTES=12`, `CREPE_MODEL=tiny`, `DEMUCS_MODEL=htdemucs`, `PROCESS_THREADS=5`, `YTDLP_AUTO_UPDATE=1`.
 
 ### Without Dockge
 
@@ -55,7 +54,7 @@ Browsers only allow microphone access on secure pages, so `http://192.168.x.x` w
 1. **Click through the warning** ("Advanced → Proceed"). The microphone still works in Chrome and Firefox.
 2. **Trust Caddy's root certificate** to get rid of the warning for good. It's at `caddy-data/caddy/pki/authorities/local/root.crt` once Caddy has started. Install it on Android under Settings → Security → Encryption & credentials → Install a certificate → CA certificate. On Windows, double-click it and add it to "Trusted Root Certification Authorities".
 
-If you use Tailscale, `tailscale serve --bg 8095` on the server gives you a real HTTPS address with no certificate warnings, and it works away from home too.
+If you use Tailscale, `tailscale serve --bg https+insecure://localhost:8443` on the server gives you a real HTTPS address with no certificate warnings, and it works away from home too.
 
 ### YouTube
 
