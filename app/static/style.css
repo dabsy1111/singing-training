@@ -89,3 +89,13 @@ th { color: var(--dim); font-weight: 500; }
 }
 .modal { position: fixed; inset: 0; background: rgba(5,6,10,.7); display: flex; align-items: center; justify-content: center; z-index: 30; padding: 16px; }
 .modal .card { max-width: 440px; width: 100%; }
+.lyrics { padding: 8px 12px 10px; margin: 10px 0 0; }
+.lyr-head { gap: 6px; }
+.lyr-head button, .lyr-tools button { padding: 3px 10px; }
+.lyr-tools { display: inline-flex; gap: 6px; align-items: center; }
+.lyr-body { position: relative; height: 150px; overflow-y: auto; scroll-behavior: smooth; padding: 4px 2px; -webkit-overflow-scrolling: touch; }
+.lyr-body p { margin: 5px 0; color: var(--dim); font-size: 17px; line-height: 1.35; cursor: pointer; }
+.lyr-body p.on { color: var(--text); font-weight: 600; }
+.lyr-body span.sung { color: var(--accent); }
+textarea { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font: inherit; }
+@media (max-width: 600px) { .lyr-body { height: 110px; } .lyr-body p { font-size: 16px; } }

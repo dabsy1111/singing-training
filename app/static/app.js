@@ -730,6 +730,126 @@ const OCT_KEY = id => `vl-octave-${id}`;
 function savedOctave(id) { try { return localStorage.getItem(OCT_KEY(id)) || 'auto'; } catch { return 'auto'; } }
 function saveOctave(id, v) { try { localStorage.setItem(OCT_KEY(id), v); } catch { /* ignore */ } }
 
+// ---- lyrics panel: follows the song, current line highlighted, tap a line to jump there
+function modal(html) {
+  const wrap = document.createElement('div'); wrap.className = 'modal';
+  wrap.innerHTML = `<div class="card">${html}</div>`;
+  document.body.appendChild(wrap);
+  wrap.addEventListener('click', e => { if (e.target === wrap) wrap.remove(); });
+  return wrap;
+}
+
+function setupLyrics(id, P, song) {
+  const body = $('#lyrBody');
+  let L = null, groq = false, guess = { artist: '', track: '' };
+  let cur = -1, userScrollUntil = 0, raf = 0, saveTimer = 0;
+  const describe = () => {
+    if (!L) return 'No lyrics yet';
+    const who = L.match?.artist ? `${L.match.artist} – ${L.match.track}` : '';
+    const src = L.source === 'groq' ? 'Transcribed by Whisper, may have mistakes'
+      : L.source === 'lrclib' ? `From LRCLIB${who ? ': ' + who : ''}` : 'Your lyrics';
+    return src + (L.edited ? ' · edited' : '') + (L.synced ? '' : ' · not timed, scroll by hand');
+  };
+  function render() {
+    $('#lyrSrc').textContent = describe();
+    $('#lyrTime').hidden = !(L && L.synced);
+    $('#lyrOff').textContent = L && L.synced ? `${L.offset > 0 ? '+' : ''}${(L.offset || 0).toFixed(1)}s` : '';
+    if (!L || !L.lines.length) {
+      body.innerHTML = `<p class="dim">No lyrics for this song yet. <button id="lyrFind2">Find lyrics</button></p>`;
+      $('#lyrFind2').onclick = findDialog; return;
+    }
+    body.innerHTML = L.lines.map((l, i) => `<p data-i="${i}">${l.words?.length
+      ? l.words.map((w, j) => `<span data-j="${j}">${esc(w.w)}</span>`).join(' ') : esc(l.text) || '&nbsp;'}</p>`).join('');
+    cur = -1;
+  }
+  async function load() {
+    try {
+      const r = await api(`/api/songs/${id}/lyrics`);
+      L = r.lyrics; groq = r.groq; guess = r.guess;
+    } catch { L = null; }
+    render();
+  }
+  function tick() {
+    raf = requestAnimationFrame(tick);
+    if (!L || !L.synced || !L.lines.length || !document.body.contains(body)) return;
+    const t = P.now() - (L.offset || 0);
+    let i = -1;
+    for (let k = 0; k < L.lines.length; k++) { if (L.lines[k].t0 <= t + 0.15) i = k; else break; }
+    if (i !== cur) {
+      body.querySelector('p.on')?.classList.remove('on');
+      const el = i >= 0 ? body.querySelector(`p[data-i="${i}"]`) : null;
+      el?.classList.add('on');
+      if (el && Date.now() > userScrollUntil) body.scrollTo({ top: el.offsetTop - body.clientHeight * 0.3, behavior: 'smooth' });
+      cur = i;
+    }
+    const line = L.lines[i];
+    if (line?.words) {
+      body.querySelectorAll(`p[data-i="${i}"] span`).forEach((sp, j) => sp.classList.toggle('sung', line.words[j].t0 <= t + 0.05));
+    }
+  }
+  body.addEventListener('wheel', () => { userScrollUntil = Date.now() + 4000; }, { passive: true });
+  body.addEventListener('touchmove', () => { userScrollUntil = Date.now() + 4000; }, { passive: true });
+  body.addEventListener('click', e => {
+    const p = e.target.closest('p[data-i]');
+    if (!p || !L?.synced || P.playing) return;
+    P.pos = Math.max(0, L.lines[+p.dataset.i].t0 + (L.offset || 0) - 1);   // jump a second before the line
+    userScrollUntil = 0; cur = -2;
+  });
+  const nudge = d => {
+    if (!L) return;
+    L.offset = Math.round(((L.offset || 0) + d) * 10) / 10; render();
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => api(`/api/songs/${id}/lyrics`, { method: 'PUT', json: { offset: L.offset } }).catch(e => toast(e.message)), 600);
+  };
+  $('#lyrEarly').onclick = () => nudge(-0.2);
+  $('#lyrLate').onclick = () => nudge(0.2);
+  $('#lyrEdit').onclick = () => {
+    const m = modal(`<h2 style="margin-top:0">Edit lyrics</h2>
+      <textarea id="lyrText" rows="14" style="width:100%">${esc((L?.lines || []).map(l => l.text).join('\n'))}</textarea>
+      <p class="small dim">One line per line. ${L?.synced ? 'Keep the same number of lines to keep the timing exact; adding or removing lines spreads the timing out evenly.' : ''}</p>
+      <div class="row"><button class="primary" id="lyrSave">Save</button><button id="lyrCancel">Cancel</button>
+      ${L ? '<button class="danger" id="lyrDel">Remove lyrics</button>' : ''}</div>`);
+    m.querySelector('#lyrCancel').onclick = () => m.remove();
+    m.querySelector('#lyrSave').onclick = async () => {
+      try { L = (await api(`/api/songs/${id}/lyrics`, { method: 'PUT', json: { text: m.querySelector('#lyrText').value } })).lyrics; render(); m.remove(); }
+      catch (e) { toast(e.message); }
+    };
+    m.querySelector('#lyrDel')?.addEventListener('click', async () => {
+      if (!confirm('Remove the lyrics for this song?')) return;
+      await api(`/api/songs/${id}/lyrics`, { method: 'DELETE' }); L = null; render(); m.remove();
+    });
+  };
+  function findDialog() {
+    const a = L?.match?.artist || guess.artist || '', t = L?.match?.track || guess.track || '';
+    const m = modal(`<h2 style="margin-top:0">Find lyrics</h2>
+      <div style="display:grid;gap:8px">
+        <label class="dim small">Artist <input type="text" id="fArtist" value="${esc(a)}" style="width:100%"></label>
+        <label class="dim small">Song <input type="text" id="fTrack" value="${esc(t)}" style="width:100%"></label>
+        <label class="dim small">Where from <select id="fSrc" style="width:100%">
+          <option value="auto">Look up, then transcribe if not found</option>
+          <option value="lrclib">Look up only (LRCLIB)</option>
+          <option value="groq" ${groq ? '' : 'disabled'}>Transcribe the vocal (Groq Whisper)${groq ? '' : ': needs GROQ_API_KEY'}</option>
+        </select></label>
+      </div>
+      <p class="small dim" id="fMsg">${L?.edited ? 'This replaces your edited lyrics.' : ''}</p>
+      <div class="row"><button class="primary" id="fGo">Find</button><button id="fCancel">Cancel</button></div>`);
+    m.querySelector('#fCancel').onclick = () => m.remove();
+    m.querySelector('#fGo').onclick = async () => {
+      const btn = m.querySelector('#fGo'); btn.disabled = true;
+      m.querySelector('#fMsg').textContent = m.querySelector('#fSrc').value === 'lrclib' ? 'Searching…' : 'Searching (transcribing can take up to a minute)…';
+      try {
+        L = (await api(`/api/songs/${id}/lyrics`, { method: 'POST', json: {
+          source: m.querySelector('#fSrc').value, artist: m.querySelector('#fArtist').value.trim(), track: m.querySelector('#fTrack').value.trim() } })).lyrics;
+        render(); m.remove();
+      } catch (e) { m.querySelector('#fMsg').textContent = e.message; btn.disabled = false; }
+    };
+  }
+  $('#lyrFind').onclick = findDialog;
+  load(); tick();
+  const prev = cleanup;
+  cleanup = () => { cancelAnimationFrame(raf); prev?.(); };
+}
+
 // Keys and harmony. Harmony moves each melody note a number of steps along the song's
 // scale (a third = 2 steps), so it stays in key; notes outside the scale keep their offset.
 const KEY_NAMES = { major: ['C', 'D♭', 'D', 'E♭', 'E', 'F', 'F♯', 'G', 'A♭', 'A', 'B♭', 'B'],
@@ -772,7 +892,20 @@ route(/^\/song\/([0-9a-f]{12})$/, async id => {
   const trLabel = n => n === 0 ? 'Original key' : `${n > 0 ? '+' : '−'}${Math.abs(n)} semitone${Math.abs(n) > 1 ? 's' : ''}${key ? ` (${keyName({ ...key, tonic: key.tonic + n })})` : ''}`;
   view.innerHTML = `
     <div class="row"><h1 class="grow"><span id="songTitle">${esc(song.title)}</span> <button id="rename" title="Rename" aria-label="Rename" style="font-size:14px;padding:4px 8px;vertical-align:middle">✎</button></h1><span class="dim small" id="loadmsg">Loading audio…</span></div>
-    <div class="stage" id="stage" style="height:min(52vh,460px)"></div>
+    <div class="stage" id="stage" style="height:min(46vh,420px)"></div>
+    <div class="card lyrics" id="lyr" ${songPref('all', 'lyrics', '1') === '1' ? '' : 'hidden'}>
+      <div class="row lyr-head">
+        <span class="dim small grow" id="lyrSrc">Lyrics…</span>
+        <span class="lyr-tools" id="lyrTime" hidden>
+          <button id="lyrEarly" title="Show lyrics earlier" aria-label="Show lyrics earlier">−</button>
+          <span class="dim small" id="lyrOff"></span>
+          <button id="lyrLate" title="Show lyrics later" aria-label="Show lyrics later">+</button>
+        </span>
+        <button id="lyrEdit" title="Edit lyrics" aria-label="Edit lyrics">✎</button>
+        <button id="lyrFind" title="Find lyrics again" aria-label="Find lyrics again">↻</button>
+      </div>
+      <div class="lyr-body" id="lyrBody"></div>
+    </div>
     <div class="controls">
       <button class="primary" id="play" disabled>▶ Sing</button>
       <button id="restart" title="Back to section start">⏮</button>
@@ -794,6 +927,7 @@ route(/^\/song\/([0-9a-f]{12})$/, async id => {
       <label>Guide vocal <input type="range" id="vVoc" min="0" max="1.2" step="0.05" value="0.3"></label>
       <label><input type="checkbox" id="octFree" ${s.octaveFree ? 'checked' : ''}> Any octave counts</label>
       <label><input type="checkbox" id="contour" checked> Show melody line</label>
+      <label><input type="checkbox" id="showLyr" ${songPref('all', 'lyrics', '1') === '1' ? 'checked' : ''}> Show lyrics</label>
     </div>
     <div class="legend small"><span><i style="background:var(--green)"></i>within ${s.greenCents}¢</span><span><i style="background:var(--amber)"></i>within ${s.amberCents}¢</span><span><i style="background:var(--red)"></i>off</span><span>Drag the track to move around when stopped. Headphones work best.</span></div>
     ${Math.abs(an.tuning || 0) >= 10 ? `<p class="dim small">Recording is tuned ${an.tuning > 0 ? '+' : ''}${an.tuning}¢ from A440; targets follow it.</p>` : ''}
@@ -884,6 +1018,8 @@ route(/^\/song\/([0-9a-f]{12})$/, async id => {
       song.title = upd.title; $('#songTitle').textContent = upd.title;
     } catch (err) { toast(err.message); }
   };
+  setupLyrics(id, P, song);
+  $('#showLyr').onchange = e => { setSongPref('all', 'lyrics', e.target.checked ? '1' : '0'); $('#lyr').hidden = !e.target.checked; };
   $('#vAcc').oninput = e => { vols.accomp = +e.target.value; P.setVolume('accomp', vols.accomp); };
   $('#vVoc').oninput = e => { vols.vocals = +e.target.value; P.setVolume('vocals', vols.vocals); };
   $('#octFree').onchange = e => { s.octaveFree = e.target.checked; saveSettings({ octaveFree: s.octaveFree }); };

@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import auth, db, pipeline
+from . import auth, db, lyrics, pipeline
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
@@ -70,6 +70,17 @@ class KeyIn(BaseModel):
 
 class TransposeIn(BaseModel):
     semitones: int
+
+
+class LyricsFind(BaseModel):
+    source: str = "auto"          # auto | lrclib | groq
+    artist: str | None = None
+    track: str | None = None
+
+
+class LyricsEdit(BaseModel):
+    text: str | None = None       # one line per lyric line
+    offset: float | None = None   # seconds; positive shows lyrics later
 
 
 _fit_cache: dict[str, tuple[float, list]] = {}
@@ -232,6 +243,55 @@ def transpose(song_id: str, body: TransposeIn):
     return pipeline.transposed(song_id, body.semitones)
 
 
+def _ready_song(song_id):
+    s = db.get_song(song_id)
+    if not s or s["status"] != "ready":
+        raise HTTPException(404, "Song isn't ready")
+    return s
+
+
+@app.get("/api/songs/{song_id}/lyrics")
+def get_lyrics(song_id: str):
+    s = _ready_song(song_id)
+    data = lyrics.load(pipeline.song_dir(song_id))
+    artist, track = lyrics.split_title(s["title"])
+    return {"lyrics": data, "guess": {"artist": artist, "track": track}, "groq": bool(lyrics.GROQ_KEY)}
+
+
+@app.post("/api/songs/{song_id}/lyrics")
+def find_lyrics(song_id: str, body: LyricsFind):
+    s = _ready_song(song_id)
+    d = pipeline.song_dir(song_id)
+    notes = json.loads((d / "analysis.json").read_text()).get("notes", [])
+    try:
+        return {"lyrics": lyrics.find(d, s["title"], s["duration"] or 0, notes,
+                                      body.source if body.source in ("auto", "lrclib", "groq") else "auto",
+                                      body.artist, body.track)}
+    except lyrics.LyricsError as e:
+        raise HTTPException(404, f"No lyrics found: {e}")
+    except Exception as e:  # noqa: BLE001 - network trouble etc.
+        raise HTTPException(502, f"Lyrics lookup failed: {e}")
+
+
+@app.put("/api/songs/{song_id}/lyrics")
+def edit_lyrics(song_id: str, body: LyricsEdit):
+    _ready_song(song_id)
+    d = pipeline.song_dir(song_id)
+    data = lyrics.load(d) or {"source": "manual", "synced": False, "lines": [], "offset": 0.0}
+    if body.text is not None:
+        data = lyrics.edit_text(data, body.text[:20000])
+    if body.offset is not None:
+        data["offset"] = round(max(-60.0, min(60.0, body.offset)), 2)
+    return {"lyrics": lyrics.save(d, data)}
+
+
+@app.delete("/api/songs/{song_id}/lyrics")
+def delete_lyrics(song_id: str):
+    _ready_song(song_id)
+    lyrics.path_for(pipeline.song_dir(song_id)).unlink(missing_ok=True)
+    return {"ok": True}
+
+
 @app.get("/media/songs/{song_id}/{name}")
 def song_media(song_id: str, name: str):
     if not re.fullmatch(r"(accompaniment|vocals|original)(\.t-?[1-7])?\.mp3", name) or not re.fullmatch(r"[0-9a-f]{12}", song_id):
@@ -338,6 +398,7 @@ def put_settings(values: dict):
 def health():
     import yt_dlp
     return {"ok": True, "yt_dlp": yt_dlp.version.__version__, "demucs_model": pipeline.DEMUCS_MODEL,
+            "lyrics_transcription": "groq" if lyrics.GROQ_KEY else "off",
             "crepe_model": pipeline.CREPE_MODEL, "queue": pipeline._jobs.qsize()}
 
 

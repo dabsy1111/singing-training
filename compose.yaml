@@ -13,6 +13,8 @@ services:
       DEMUCS_MODEL: ${DEMUCS_MODEL:-htdemucs}    # htdemucs, htdemucs_ft or mdx_extra
       PROCESS_THREADS: ${PROCESS_THREADS:-5}
       YTDLP_AUTO_UPDATE: ${YTDLP_AUTO_UPDATE:-1}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}            # optional: transcribe lyrics LRCLIB doesn't have
+      GROQ_LANGUAGE: ${GROQ_LANGUAGE:-}          # optional: e.g. en; blank = detect
     volumes:
       - ./data:/data
     # No ports published: everything goes through Caddy's HTTPS port below.

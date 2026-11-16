@@ -14,6 +14,7 @@ A self-hosted singing trainer modelled on vocalify.me, with one big addition: pa
   - "Any octave counts" is still there if you'd rather be scored in whatever octave you sing.
 - **Grading.** Each note is scored on onset, transition and hold. Scoops into a note aren't penalised. Results show your score, notes landed, whether you sit sharp or flat, and your weakest notes.
 - **Latency.** A 10-second timing check at the start of each session measures your headphone and mic delay (sing "da" with a few beeps), saved per device. After each run it also checks whether your pitch line fits better shifted in time and offers a one-tap correction.
+- **Lyrics.** A panel under the notes follows the song, highlighting the current line (and word, for transcribed songs). Tap a line to jump there, nudge the timing with − and +, edit the words, or search again with a different artist and title.
 - **Warm-ups.** Five-note scale, arpeggio, thirds, octave leap, long tone, minor and nine-note scales, plus chained series. Each climbs through your range semitone by semitone and back down.
 - **Range test and tuner.** Hold your lowest and highest comfortable notes to set your range.
 - **Ear training.** Higher or lower, name the interval, sing it back. Misses are logged so weak intervals show up.
@@ -73,6 +74,14 @@ A tunnel also solves the certificate warnings, since Cloudflare serves a real ce
 
 Wrong passwords are slowed down, and eight in 15 minutes locks that address out for 15 minutes.
 
+### Lyrics
+
+When a song is added, the server looks it up on [LRCLIB](https://lrclib.net), a free community database of line-timed lyrics, matched on artist, title and length. Video versions often have a longer intro than the album version, so it lines the timing up with where the singing actually starts (and leaves it alone if it isn't confident).
+
+If LRCLIB doesn't have it and you've set `GROQ_API_KEY`, the separated vocal is sent to Groq's hosted Whisper (`whisper-large-v3`), which returns every word with a time. That costs about $0.11 per hour of audio, so a few cents for a hundred songs. Transcriptions can mishear words, especially shouted or heavily effected vocals; fix them with ✎. Lines Whisper invents over silence ("thanks for watching" and the like) are dropped.
+
+For songs added before this existed, press ↻ in the lyrics panel. If the title is messy, correct the artist and song in that dialog.
+
 ### iPhone and AirPods
 
 Use Safari over the tunnel address (or the LAN address after trusting Caddy's certificate on the phone). Things to know:
@@ -118,6 +127,7 @@ app/main.py           API: songs, runs, settings, stats, media
 app/pipeline.py       yt-dlp → Demucs → CREPE → notes, run one at a time in a background thread
 app/db.py             SQLite
 app/auth.py           password sign-in (VL_PASSWORD), session cookie
+app/lyrics.py         LRCLIB lookup, Groq Whisper transcription, timing alignment
 app/static/           Front end, plain JS with no build step
   app.js              views, practice engine, scoring, drills, ear training
   pitch-worklet.js    YIN pitch detection on the audio thread

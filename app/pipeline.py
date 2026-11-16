@@ -128,6 +128,14 @@ def process(song_id: str, job: dict):
     except Exception:  # noqa: BLE001 - key is a nice-to-have; the song still works without it
         log.exception("key detection failed for %s", song_id)
 
+    stage(song_id, "Finding the lyrics")
+    try:
+        from . import lyrics
+        title = (db.get_song(song_id) or {}).get("title") or ""
+        lyrics.find(d, title, duration, analysis["notes"])
+    except Exception as e:  # noqa: BLE001 - lyrics are optional; the song works without them
+        log.info("no lyrics for %s: %s", song_id, e)
+
     lo, hi = analysis.get("range") or (None, None)
     db.update_song(song_id, status="ready", stage=None, error=None, note_low=lo, note_high=hi)
 
