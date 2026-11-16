@@ -22,29 +22,26 @@ services:
     restart: unless-stopped
     ports:
       - "${VL_HTTPS_PORT:-8443}:443"
-    configs:
-      - source: caddyfile
-        target: /etc/caddy/Caddyfile
     volumes:
       - ./caddy-data:/data
     depends_on:
       - app
-
-configs:
-  caddyfile:
-    # HTTPS on the LAN using Caddy's own certificate authority.
+    # The Caddy config lives in an environment variable so that any change to it
+    # makes Docker recreate the container (Dockge's Deploy picks it up).
+    # default_sni: browsers don't say which site they want when you browse to an
+    # IP address, and inside Docker Caddy can't see which IP you used.
     # To add a password, put a basic_auth block above reverse_proxy
     # (hash from: docker exec vocal-lab-caddy caddy hash-password).
-    # default_sni: browsers don't say which site they want when you browse to an IP address,
-    # and inside Docker Caddy can't tell which IP you used, so point it at VL_HOST.
-    content: |
-      {
-        default_sni ${VL_HOST:-localhost}
-      }
-      https://${VL_HOST:-localhost} {
-        tls internal
-        request_body {
-          max_size 500MB
+    environment:
+      CADDYFILE: |
+        {
+          default_sni ${VL_HOST:-localhost}
         }
-        reverse_proxy app:8000
-      }
+        https://${VL_HOST:-localhost} {
+          tls internal
+          request_body {
+            max_size 500MB
+          }
+          reverse_proxy app:8000
+        }
+    command: ["sh", "-c", "printf '%s' \"$$CADDYFILE\" > /etc/caddy/Caddyfile && exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile"]
