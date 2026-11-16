@@ -8,7 +8,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -21,8 +21,27 @@ TAKES_DIR = DATA_DIR / "takes"
 UPLOAD_DIR = DATA_DIR / "uploads"
 STATIC = Path(__file__).parent / "static"
 
+import time as _time
+
+VERSION = (os.environ.get("VL_VERSION") or "").strip()[:7] or f"dev{int(_time.time())}"
+BUILT = os.environ.get("VL_BUILT", "")
+
 app = FastAPI(title="Vocal Lab")
 app.middleware("http")(auth.middleware)
+
+
+@app.middleware("http")
+async def cache_headers(request, call_next):
+    """Static files are addressed as /static/x.js?v=<version>, so they can be cached forever;
+    a new build changes the address. Anything else must be checked with the server every time,
+    so Cloudflare and Safari never hold on to an old copy."""
+    resp = await call_next(request)
+    if request.url.path.startswith("/static/"):
+        resp.headers["Cache-Control"] = ("public, max-age=31536000, immutable"
+                                         if request.query_params.get("v") == VERSION else "no-cache")
+    elif request.url.path.startswith("/api/"):
+        resp.headers.setdefault("Cache-Control", "no-store")
+    return resp
 
 
 @app.on_event("startup")
@@ -397,7 +416,7 @@ def put_settings(values: dict):
 @app.get("/api/health")
 def health():
     import yt_dlp
-    return {"ok": True, "yt_dlp": yt_dlp.version.__version__, "demucs_model": pipeline.DEMUCS_MODEL,
+    return {"ok": True, "version": VERSION, "built": BUILT, "yt_dlp": yt_dlp.version.__version__, "demucs_model": pipeline.DEMUCS_MODEL,
             "lyrics_transcription": "groq" if lyrics.GROQ_KEY else "off",
             "crepe_model": pipeline.CREPE_MODEL, "queue": pipeline._jobs.qsize()}
 
@@ -411,12 +430,12 @@ app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
 @app.get("/login")
 def login_form():
-    return auth.login_page()
+    return auth.login_page(version=VERSION)
 
 
 @app.post("/login")
 def login(request: Request, password: str = Form("")):
-    return auth.handle_login(request, password)
+    return auth.handle_login(request, password, version=VERSION)
 
 
 @app.get("/logout")
@@ -429,6 +448,18 @@ def me():
     return {"login": bool(auth.PASSWORD)}
 
 
+def versioned(html: str) -> str:
+    for name in ("style.css", "app.js"):
+        html = html.replace(f"/static/{name}\"", f"/static/{name}?v={VERSION}\"")
+    return html.replace("</head>", f'<script>window.VL_VERSION="{VERSION}";</script>\n</head>', 1)
+
+
+_index_html = None
+
+
 @app.get("/")
 def index():
-    return FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-cache"})
+    global _index_html
+    if _index_html is None:
+        _index_html = versioned((STATIC / "index.html").read_text())
+    return HTMLResponse(_index_html, headers={"Cache-Control": "no-cache"})

@@ -64,7 +64,7 @@ async function audioCtx() {
     A.ctx.onstatechange = () => {
       if (A.ctx?.state === 'interrupted') toast('Audio was interrupted (a call, Siri or another app). Press play again.', 6000);
     };
-    A.ready = A.ctx.audioWorklet.addModule('/static/pitch-worklet.js');
+    A.ready = A.ctx.audioWorklet.addModule(`/static/pitch-worklet.js?v=${window.VL_VERSION || ''}`);
   }
   const resumed = A.ctx.state === 'running' ? null : A.ctx.resume().catch(() => {});
   await A.ready;
@@ -1372,7 +1372,7 @@ route(/^\/settings$/, async () => {
         <button id="latSave">Save</button><button class="primary" id="latCheck">Run timing check</button></div>
       <p class="small dim">Each phone or computer keeps its own value. The check runs once per session before your first song or warm-up; run it again whenever you switch headphones (for example, AirPods to wired).</p>
     </div>
-    <div class="card small dim">Server: yt-dlp ${esc(health.yt_dlp || '?')} · separation ${esc(health.demucs_model || '?')} · pitch ${esc(health.crepe_model || '?')} · ${health.queue ?? '?'} queued</div>`;
+    <div class="card small dim">App version ${esc(health.version || '?')}${health.built ? ` (built ${esc(new Date(health.built).toLocaleString())})` : ''} · page loaded as ${esc(window.VL_VERSION || '?')}${health.version && window.VL_VERSION && health.version !== window.VL_VERSION ? ' · <b>out of date: reload the page</b>' : ''}<br>Server: yt-dlp ${esc(health.yt_dlp || '?')} · separation ${esc(health.demucs_model || '?')} · pitch ${esc(health.crepe_model || '?')} · ${health.queue ?? '?'} queued</div>`;
   const form = $('#form');
   $('#preset-b').onclick = () => { form.querySelector('[name=greenCents]').value = 35; form.querySelector('[name=amberCents]').value = 70; };
   $('#preset-a').onclick = () => { form.querySelector('[name=greenCents]').value = 15; form.querySelector('[name=amberCents]').value = 35; };

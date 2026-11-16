@@ -85,14 +85,14 @@ async def middleware(request: Request, call_next):
     return RedirectResponse("/login", status_code=303)
 
 
-def login_page(error: str = "") -> HTMLResponse:
+def login_page(error: str = "", version: str = "") -> HTMLResponse:
     msg = f'<p class="err">{html.escape(error)}</p>' if error else ""
     return HTMLResponse(f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#14161c">
 <title>Vocal Lab · Sign in</title>
-<link rel="stylesheet" href="/static/style.css"></head>
+<link rel="stylesheet" href="/static/style.css?v={version}"></head>
 <body><main style="max-width:360px;margin:12vh auto">
 <h1>Vocal Lab</h1>
 <form method="post" action="/login" class="card" style="display:grid;gap:12px">
@@ -103,17 +103,17 @@ def login_page(error: str = "") -> HTMLResponse:
 </form></main></body></html>""", headers={"Cache-Control": "no-store"})
 
 
-def handle_login(request: Request, password: str):
+def handle_login(request: Request, password: str, version: str = ""):
     if not PASSWORD:
         return RedirectResponse("/", status_code=303)
     ip = client_ip(request)
     if _locked(ip):
-        return login_page("Too many wrong attempts. Try again in 15 minutes.")
+        return login_page("Too many wrong attempts. Try again in 15 minutes.", version)
     if not hmac.compare_digest(password.encode(), PASSWORD.encode()):
         _fails.setdefault(ip, []).append(time.time())
         log.warning("failed login from %s", ip)
         time.sleep(1)
-        return login_page("Wrong password.")
+        return login_page("Wrong password.", version)
     _fails.pop(ip, None)
     resp = RedirectResponse("/", status_code=303)
     resp.set_cookie(COOKIE, _token(), max_age=MAX_AGE, httponly=True, samesite="lax",

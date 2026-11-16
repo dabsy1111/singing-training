@@ -22,6 +22,9 @@ RUN pip install -r requirements.txt
 RUN python -c "from demucs.pretrained import get_model; get_model('htdemucs')"
 
 COPY app ./app
+ARG VL_VERSION=""
+ARG VL_BUILT=""
+ENV VL_VERSION=$VL_VERSION VL_BUILT=$VL_BUILT
 COPY entrypoint.sh .
 RUN chmod +x entrypoint.sh
 
