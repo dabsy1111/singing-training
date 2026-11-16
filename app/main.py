@@ -331,7 +331,7 @@ async def add_run(meta: str = Form(...), take: UploadFile | None = File(None)):
         m = json.loads(meta)
     except json.JSONDecodeError:
         raise HTTPException(400, "Bad run data")
-    if m.get("kind") not in ("song", "drill", "ear"):
+    if m.get("kind") not in ("song", "drill", "ear", "lesson"):
         raise HTTPException(400, "Unknown run kind")
     run_id = db.add_run(m["kind"], str(m.get("ref") or ""), str(m.get("title") or "")[:200],
                         m.get("score"), m.get("details") or {})
@@ -345,8 +345,8 @@ async def add_run(meta: str = Form(...), take: UploadFile | None = File(None)):
 
 
 @app.get("/api/runs")
-def runs(kind: str | None = None, ref: str | None = None, limit: int = 200):
-    return db.list_runs(limit=min(limit, 2000), kind=kind, ref=ref)
+def runs(kind: str | None = None, ref: str | None = None, limit: int = 200, details: bool = False):
+    return db.list_runs(limit=min(limit, 2000), kind=kind, ref=ref, with_details=details)
 
 
 @app.get("/api/runs/{run_id}")
@@ -413,6 +413,18 @@ def put_settings(values: dict):
     return db.put_settings(values)
 
 
+@app.get("/api/course")
+def get_course():
+    return db.get_kv("course", {})
+
+
+@app.put("/api/course")
+def put_course(value: dict):
+    if len(json.dumps(value)) > 200_000:
+        raise HTTPException(413, "Course data too large")
+    return db.put_kv("course", value)
+
+
 @app.get("/api/health")
 def health():
     import yt_dlp
@@ -449,7 +461,7 @@ def me():
 
 
 def versioned(html: str) -> str:
-    for name in ("style.css", "app.js"):
+    for name in ("style.css", "app.js", "lessons.js", "course.js"):
         html = html.replace(f"/static/{name}\"", f"/static/{name}?v={VERSION}\"")
     return html.replace("</head>", f'<script>window.VL_VERSION="{VERSION}";</script>\n</head>', 1)
 

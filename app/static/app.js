@@ -176,6 +176,17 @@ function playTone(ctx, dest, midi, when, dur, vol = 0.25) {
   return oscs;
 }
 
+// ---------------------------------------------------------------- little shared trackers
+const today = () => new Date().toLocaleDateString('en-CA');
+function addSungSeconds(sec) {
+  try {
+    const k = 'vl-sung-' + today();
+    localStorage.setItem(k, String((Number(localStorage.getItem(k)) || 0) + sec));
+  } catch { /* ignore */ }
+}
+function sungSecondsToday() { try { return Number(localStorage.getItem('vl-sung-' + today())) || 0; } catch { return 0; } }
+function markRangeSaved() { try { localStorage.setItem('vl-range-saved-at', String(Date.now())); } catch { /* ignore */ } }
+
 // ---------------------------------------------------------------- scoring
 function centsOff(userMidi, target, octaveFree) {
   let c = (userMidi - target) * 100;
@@ -190,7 +201,7 @@ function gradeNote(note, s) {
   if (!fr.length) return null;
   const hold = fr.filter(f => f.dt >= tw);
   const holdScore = hold.length
-    ? hold.reduce((a, f) => a + (f.c === null ? 0 : Math.abs(f.c) <= s.greenCents ? 1 : Math.abs(f.c) <= s.amberCents ? 0.6 : 0), 0) / hold.length
+    ? hold.reduce((a, f) => a + (f.c === null ? 0 : Math.abs(f.c) <= s.greenCents ? 1 : Math.abs(f.c) <= s.amberCents ? 0.5 : 0), 0) / hold.length
     : 0;
   const firstGood = fr.find(f => f.c !== null && Math.abs(f.c) <= s.amberCents);
   const onset = firstGood ? clamp(1 - (firstGood.dt - 0.12) / 0.3, 0, 1) : 0;
@@ -203,21 +214,27 @@ function gradeNote(note, s) {
 
 // Re-score a run at different time offsets to estimate leftover latency.
 function bestOffset(notes, trail, s, tune = 0) {
-  let best = { off: 0, score: -1 };
-  for (let off = -0.6; off <= 0.601; off += 0.02) {
-    let good = 0, total = 0;
-    for (const p of trail) {
-      if (p.midi === null) continue;
-      const t = p.t - off;
-      const n = findNote(notes, t);
-      if (!n) continue;
-      total++;
-      if (Math.abs(centsOff(p.midi, n.midi + tune, s.octaveFree)) <= s.amberCents) good++;
+  // Score each shift by how much of the singing lands on a note and in tune. Singing that
+  // falls between notes counts against a shift, so long held notes don't pull it to the edge.
+  const voiced = trail.filter(p => p.midi !== null);
+  const scoreAt = off => {
+    if (!voiced.length) return 0;
+    let good = 0;
+    for (const p of voiced) {
+      const n = findNote(notes, p.t - off);
+      if (n && Math.abs(centsOff(p.midi, n.midi + tune, s.octaveFree)) <= s.amberCents) good++;
     }
-    const sc = total ? good / total : 0;
-    if (sc > best.score + 1e-6) best = { off, score: sc };
+    return good / voiced.length;
+  };
+  const base = scoreAt(0);
+  let best = { off: 0, score: base };
+  for (let off = -0.6; off <= 0.601; off += 0.02) {
+    const sc = scoreAt(off);
+    if (sc > best.score + 1e-6 || (Math.abs(sc - best.score) < 1e-6 && Math.abs(off) < Math.abs(best.off))) best = { off, score: sc };
   }
-  return best;
+  // Only worth mentioning if it's clearly better and not just the edge of the search.
+  const real = best.score - base >= 0.04 && Math.abs(best.off) <= 0.56;
+  return { off: real ? Math.round(best.off * 100) / 100 : 0, score: best.score, gain: best.score - base };
 }
 
 function findNote(notes, t) {
@@ -299,7 +316,7 @@ class Practice {
       const cue = ctx.createGain(); cue.gain.value = 0.9; cue.connect(this.master);
       for (const c of this.target.cues || []) if (c.t0 >= from && c.t0 < to)
         this.nodes.push(...playTone(ctx, cue, c.midi, this.startCtx + c.t0 - from, c.t1 - c.t0, 0.22));
-      for (const n of this.notes) if (n.t0 >= from && n.t0 < to)
+      for (const n of this.notes) if (n.t0 >= from && n.t0 < to && n.guide !== false)
         this.nodes.push(...playTone(ctx, g, n.midi, this.startCtx + n.t0 - from, n.t1 - n.t0, 0.2));
     }
     this.playing = true;
@@ -340,10 +357,11 @@ class Practice {
     const n = findNote(this.notes, t);
     let c = null;
     if (n && f.midi !== null) c = centsOff(f.midi, n.midi + this.tune, s.octaveFree);
-    if (n && t >= this.section.from) n.frames.push({ dt: t - n.t0, c });
+    if (n && t >= this.section.from) n.frames.push({ dt: t - n.t0, c, rms: f.rms });
     let show = f.midi;
     if (show !== null && s.octaveFree && n) show = n.midi + this.tune + c / 100;   // draw in the target's octave
-    this.trail.push({ t, midi: f.midi, show, c, onNote: !!n });
+    this.trail.push({ t, midi: f.midi, show, c, onNote: !!n, rms: f.rms });
+    this.opts.onFrame?.(f, t, n, c);
     this.current = { midi: f.midi, c, n };
     // grade notes that have finished
     for (const m of this.notes) if (!m.result && m.t1 < t && m.t0 >= this.section.from && m.frames.length) m.result = gradeNote(m, s);
@@ -352,6 +370,7 @@ class Practice {
   async stop(finished = false) {
     if (!this.playing) return null;
     const reached = Math.min(this.now() - (this.latency || 0), this.section.to);
+    addSungSeconds(Math.max(0, reached - this.section.from));
     this.playing = false;
     clearTimeout(this.endTimer);
     this.pos = clamp(reached, 0, this.target.duration);
@@ -438,7 +457,7 @@ class Practice {
       g.fillStyle = col; g.globalAlpha = n.result ? 0.45 : 1;
       roundRect(g, X0, Y - rowH * 0.38, Math.max(2, X1 - X0 - 1), rowH * 0.76, Math.min(5, rowH * 0.3));
       g.globalAlpha = 1;
-      if (X1 - X0 > 26 && rowH > 11) { g.fillStyle = 'rgba(255,255,255,0.75)'; g.fillText(noteName(n.midi), X0 + 4, Y); }
+      if (X1 - X0 > 26 && rowH > 11) { g.fillStyle = 'rgba(255,255,255,0.75)'; g.fillText(n.label || noteName(n.midi), X0 + 4, Y); }
     }
     // user trail
     g.lineWidth = 3; g.lineCap = 'round';
@@ -449,6 +468,18 @@ class Practice {
       g.strokeStyle = p.c === null ? 'rgba(220,225,240,0.6)' : Math.abs(p.c) <= s.greenCents ? green : Math.abs(p.c) <= s.amberCents ? amber : red;
       if (prev && p.t - prev.t < 0.05) { g.beginPath(); g.moveTo(prev.X, prev.Y); g.lineTo(X, Y); g.stroke(); }
       prev = { X, Y, t: p.t };
+    }
+    // text marks from lessons ("think it…", "5th up", glide instructions)
+    if (this.opts.marks?.length) {
+      g.fillStyle = 'rgba(232,234,240,0.9)'; g.font = '600 13px system-ui'; g.textBaseline = 'top';
+      for (const m of this.opts.marks) if (m.t > t0 - 3 && m.t < t1) g.fillText(m.text, Math.max(4, x(m.t)), 8);
+      g.font = '11px system-ui'; g.textBaseline = 'middle';
+    }
+    // breath marks (gaps in the melody where a breath fits)
+    if (this.opts.breathMarks) {
+      g.fillStyle = 'rgba(122,162,255,0.9)'; g.font = 'bold 13px system-ui'; g.textBaseline = 'top';
+      for (const b of this.opts.breathMarks) if (b > t0 && b < t1) { g.fillRect(x(b) - 1, 0, 2, 10); g.fillText('✓ breathe', x(b) + 3, 2); }
+      g.font = '11px system-ui'; g.textBaseline = 'middle';
     }
     // playhead
     g.fillStyle = 'rgba(255,255,255,0.5)'; g.fillRect(px, 0, 1, H);
@@ -648,12 +679,13 @@ route(/^\/$/, async () => {
   const list = $('#list');
   let timer = null;
   const s = await settings();
+  const cs = typeof course === 'function' ? await course().catch(() => ({})) : {};
   async function refresh() {
     const songs = await api('/api/songs');
     list.innerHTML = songs.length ? songs.map(song => `
       <div class="card song" data-id="${song.id}">
         <div class="grow">
-          <div class="title" title="${esc(song.title)}">${esc(song.title)}</div>
+          <div class="title" title="${esc(song.title)}">${esc(song.title)}${cs.courseSong === song.id && !cs.songsPassed?.[song.id] ? ' <span class="pill processing">learning</span>' : ''}</div>
           <div class="small dim">${song.duration ? fmtTime(song.duration) + ' · ' : ''}${song.note_low != null ? `${noteName(song.note_low)}–${noteName(song.note_high)}` + fitHint(song, s) : esc(song.stage || '')}</div>
           ${song.error ? `<div class="err">${esc(song.error)}</div>` : ''}
         </div>
@@ -881,7 +913,7 @@ function songPref(id, what, dflt) { try { return localStorage.getItem(PREF_KEY(i
 function setSongPref(id, what, v) { try { localStorage.setItem(PREF_KEY(id, what), v); } catch { /* ignore */ } }
 
 // ---- sing a song
-route(/^\/song\/([0-9a-f]{12})$/, async id => {
+route(/^\/song\/([0-9a-f]{12})(?:\?lesson=(\d\.\d))?$/, async (id, lessonId) => {
   const [song, an, s] = await Promise.all([api(`/api/songs/${id}`), api(`/api/songs/${id}/analysis`), settings()]);
   const firstIn = Math.max(0, Math.floor((an.notes[0]?.t0 ?? 0) - 3));   // skip a long intro
   // What you sing = melody or a harmony line, moved by the music's key shift, then by whole octaves.
@@ -1019,6 +1051,14 @@ route(/^\/song\/([0-9a-f]{12})$/, async id => {
     } catch (err) { toast(err.message); }
   };
   setupLyrics(id, P, song);
+  const lessonCtl = lessonId && typeof setupSongLesson === 'function' ? (await course(), setupSongLesson(lessonId, {
+    id, song, an, P, sec, view,
+    setGuide: v => { $('#vVoc').value = v; vols.vocals = v; P.setVolume('vocals', v); },
+    setLyrics: on => { $('#showLyr').checked = on; $('#lyr').hidden = !on; },
+    setPart: k => { if ($('#part').disabled) { part = k; setSongPref(id, 'part', k); return; } $('#part').value = k; $('#part').dispatchEvent(new Event('change')); },
+    part: () => part,
+    recording: () => !!s.recordTakes,
+  })) : null;
   $('#showLyr').onchange = e => { setSongPref('all', 'lyrics', e.target.checked ? '1' : '0'); $('#lyr').hidden = !e.target.checked; };
   $('#vAcc').oninput = e => { vols.accomp = +e.target.value; P.setVolume('accomp', vols.accomp); };
   $('#vVoc').oninput = e => { vols.vocals = +e.target.value; P.setVolume('vocals', vols.vocals); };
@@ -1041,14 +1081,16 @@ route(/^\/song\/([0-9a-f]{12})$/, async id => {
     if (!res || !document.body.contains(stage)) return res;   // left the page mid-song
     playBtn.textContent = '▶ Sing';
     $('#res').innerHTML = resultsHTML(res, s); bindLatencyButton($('#res'));
+    let runP = Promise.resolve(null);
     if (res.score !== null && res.notes.length >= 4) {
       const k = P.shift - tr;
       const bits = [part !== 'melody' ? PARTS[part].label.replace('Harmony: ', '') : null,
         tr ? `${tr > 0 ? '+' : '−'}${Math.abs(tr)} st` : null, k ? octaveLabel(k) : null].filter(Boolean);
-      saveRun('song', id, song.title + (bits.length ? ` (${bits.join(', ')})` : ''), res,
-        { shift: P.shift, part, transpose: tr, octave: k, key })
-        .catch(e => toast('Couldn’t save run: ' + e.message));
+      runP = saveRun('song', id, song.title + (bits.length ? ` (${bits.join(', ')})` : ''), res,
+        { shift: P.shift, part, transpose: tr, octave: k, key, lesson: lessonId || undefined })
+        .catch(e => { toast('Couldn’t save run: ' + e.message); return null; });
     }
+    lessonCtl?.onResult({ ...res, finished }, runP);
     if (finished && $('#loop').checked) { P.pos = sec().from; setTimeout(go, 1200); }
     else if (finished) P.pos = sec().from;
     return res;
@@ -1058,6 +1100,7 @@ route(/^\/song\/([0-9a-f]{12})$/, async id => {
 
 // ---- warm-up drills
 const DRILLS = {
+  steps3:   { name: 'Three-note steps', pattern: [0, 2, 4, 2, 0], beat: 0.6 },
   scale5:   { name: 'Five-note scale', pattern: [0, 2, 4, 5, 7, 5, 4, 2, 0], beat: 0.5 },
   arpeggio: { name: 'Major arpeggio', pattern: [0, 4, 7, 12, 7, 4, 0], beat: 0.55 },
   thirds:   { name: 'Thirds', pattern: [0, 4, 2, 5, 4, 7, 5, 2, 0], beat: 0.45 },
@@ -1071,14 +1114,19 @@ const SERIES = {
   full:  { name: 'Full warm-up', drills: ['sustain', 'scale5', 'thirds', 'arpeggio', 'octave', 'ninescale'] },
 };
 
-function buildDrill(keys, s, tempo = 1, down = true) {
+function buildDrill(keys, s, tempo = 1, down = true, o = {}) {
   const notes = [], cues = [];
   let t = 0.6;
   for (const k of keys) {
     const d = DRILLS[k], span = Math.max(...d.pattern), beat = d.beat / tempo;
     const roots = [];
-    for (let r = s.rangeLow; r + span <= s.rangeHigh; r++) roots.push(r);
-    if (!roots.length) roots.push(s.rangeLow);
+    const lowest = o.topHalf ? Math.max(s.rangeLow, Math.round((s.rangeLow + s.rangeHigh) / 2) - 2) : s.rangeLow;
+    for (let r = lowest; r + span <= s.rangeHigh; r++) roots.push(r);
+    if (!roots.length) roots.push(Math.max(s.rangeLow, s.rangeHigh - span));
+    if (o.maxRoots && roots.length > o.maxRoots) {   // spread a few roots evenly through the range
+      const pick = Array.from({ length: o.maxRoots }, (_, i) => roots[Math.round(i * (roots.length - 1) / (o.maxRoots - 1))]);
+      roots.splice(0, roots.length, ...new Set(pick));
+    }
     const seq = down ? [...roots, ...roots.slice(0, -1).reverse()] : roots;
     // keep long lists manageable
     const step = seq.length > 14 ? 2 : 1;
@@ -1086,7 +1134,7 @@ function buildDrill(keys, s, tempo = 1, down = true) {
       const r = seq[i];
       cues.push({ t0: t, t1: t + 0.7, midi: r });
       t += 0.9;
-      for (const iv of d.pattern) { notes.push({ t0: t, t1: t + beat * 0.92, midi: r + iv }); t += beat; }
+      for (const iv of d.pattern) { notes.push({ t0: t, t1: t + beat * 0.92, midi: r + iv, label: o.label }); t += beat; }
       t += 0.5;
     }
     t += 1;
@@ -1171,7 +1219,7 @@ route(/^\/range$/, async () => {
   $('#saveSel').onclick = async () => {
     const lo = +$('#selLo').value, hi = +$('#selHi').value;
     if (hi - lo < 5) return toast('Range needs at least a fourth');
-    await saveSettings({ rangeLow: lo, rangeHigh: hi }); $('#saved').textContent = `${noteName(lo)} – ${noteName(hi)}`; toast('Saved');
+    await saveSettings({ rangeLow: lo, rangeHigh: hi }); markRangeSaved(); $('#saved').textContent = `${noteName(lo)} – ${noteName(hi)}`; toast('Saved');
   };
   let recent = [], capture = null;
   const off = [];
@@ -1202,7 +1250,7 @@ route(/^\/range$/, async () => {
       const cur = await settings();
       const lo = patch.rangeLow ?? cur.rangeLow, hi = patch.rangeHigh ?? cur.rangeHigh;
       if (hi - lo < 5) { $('#cap').textContent = `Got ${noteName(m)}, but that leaves less than a fourth of range. Try again.`; return; }
-      await saveSettings(patch);
+      await saveSettings(patch); markRangeSaved();
       $('#saved').textContent = `${noteName(SETTINGS.rangeLow)} – ${noteName(SETTINGS.rangeHigh)}`;
       $('#cap').textContent = `Saved ${which}: ${noteName(m)}`;
     };
@@ -1219,6 +1267,83 @@ const EAR_LEVELS = {
   hard:   { ivs: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], hl: [0.5, 1] },
 };
 
+// Ten-question ear quiz, shown in `box`. Resolves with { score, answers }, or null if abandoned.
+async function runEarQuiz(box, mode, levelName, s, { save = true } = {}) {
+  const lv = EAR_LEVELS[levelName];
+  const mid = Math.round((s.rangeLow + s.rangeHigh) / 2);
+  const q = sel => box.querySelector(sel);
+  let off = null;
+  // Sing-back needs the mic; open it first so the same audio setup is used throughout (matters on iPhone).
+  const ctx = mode === 'sb' ? await startMic() : await audioCtx();
+  const answers = [];
+  const out = ctx.createGain(); out.connect(ctx.destination);
+  function ask(text, options, replay) {
+    return new Promise(res => {
+      box.innerHTML = `<div class="card"><p class="dim">${esc(text)}</p><div class="choices">${options.map(o => `<button data-o="${esc(o)}">${esc(o)}</button>`).join('')}</div>
+        <p><button data-replay>↻ Play again</button></p></div>`;
+      q('[data-replay]').onclick = replay;
+      box.querySelectorAll('[data-o]').forEach(b => b.onclick = () => res(b.dataset.o));
+    });
+  }
+  function reveal(pick, right) {
+    box.querySelectorAll('[data-o]').forEach(b => {
+      b.disabled = true;
+      if (b.dataset.o === right) b.classList.add('right'); else if (b.dataset.o === pick) b.classList.add('wrong');
+    });
+  }
+  for (let i = 0; i < 10; i++) {
+    if (!document.body.contains(box)) { off?.(); return null; }
+    const base = mid - 5 + Math.floor(Math.random() * 8);
+    let item, correct;
+    if (mode === 'hl') {
+      const d = lv.hl[Math.floor(Math.random() * lv.hl.length)] * (Math.random() < 0.5 ? -1 : 1);
+      const play = () => { const t = ctx.currentTime + 0.05; playTone(ctx, out, base, t, 0.7); playTone(ctx, out, base + d, t + 0.85, 0.7); };
+      play();
+      const pick = await ask(`Question ${i + 1}/10: is the second note higher or lower?`, ['Higher', 'Lower'], play);
+      correct = (pick === 'Higher') === (d > 0); item = `hl ${Math.abs(d) < 1 ? Math.abs(d) * 100 + '¢' : Math.abs(d) + ' st'}`;
+      reveal(pick, d > 0 ? 'Higher' : 'Lower');
+    } else if (mode === 'iv') {
+      const iv = lv.ivs[Math.floor(Math.random() * lv.ivs.length)];
+      const play = () => { const t = ctx.currentTime + 0.05; playTone(ctx, out, base, t, 0.8); playTone(ctx, out, base + iv, t + 0.9, 0.8); };
+      play();
+      const pick = await ask(`Question ${i + 1}/10: what interval is that?`, lv.ivs.map(x => INTERVALS[x]), play);
+      correct = pick === INTERVALS[iv]; item = INTERVALS[iv];
+      reveal(pick, INTERVALS[iv]);
+    } else {
+      const target = s.rangeLow + 2 + Math.floor(Math.random() * Math.max(1, s.rangeHigh - s.rangeLow - 4));
+      const play = () => playTone(ctx, out, target, ctx.currentTime + 0.05, 1.2);
+      play();
+      await ask(`Question ${i + 1}/10: listen, then press Sing and hold the note for about 2 seconds.`, ['Sing'], play);
+      await startMic();
+      q('.dim').textContent = 'Listening…';
+      const got = await new Promise(res => {
+        const buf = []; const t0 = performance.now();
+        off = onPitch(f => {
+          if (f.midi !== null) buf.push(f.midi);
+          if (buf.length >= 120 || performance.now() - t0 > 5000) { off(); off = null; res(buf); }
+        });
+      });
+      const sung = got.length > 30 ? got.slice(Math.floor(got.length / 4)).sort((a, b) => a - b)[Math.floor(got.length * 3 / 8)] : null;
+      const c = sung === null ? null : centsOff(sung, target, true);
+      correct = c !== null && Math.abs(c) <= s.amberCents; item = noteName(target);
+      box.innerHTML = `<div class="card"><p>Target ${noteName(target)}. ${c === null ? 'Didn’t hear enough singing.' : `You were ${Math.abs(Math.round(c))}¢ ${c > 0 ? 'sharp' : 'flat'}.`} ${correct ? '✅' : '❌'}</p></div>`;
+      await new Promise(r => setTimeout(r, 1600));
+    }
+    answers.push({ item, correct });
+    if (mode !== 'sb') await new Promise(r => setTimeout(r, 900));
+  }
+  const score = 100 * answers.filter(a => a.correct).length / answers.length;
+  if (save) {
+    const title = { hl: 'Higher or lower', iv: 'Intervals', sb: 'Sing it back' }[mode];
+    const fd = new FormData();
+    fd.append('meta', JSON.stringify({ kind: 'ear', ref: mode, title, score, details: { answers, level: levelName } }));
+    api('/api/runs', { method: 'POST', body: fd }).catch(e => toast(e.message));
+  }
+  const missed = answers.filter(a => !a.correct).map(a => a.item);
+  box.innerHTML = `<div class="card"><b>${Math.round(score)}%</b> correct.${missed.length ? ` <span class="dim">Missed: ${esc([...new Set(missed)].join(', '))}</span>` : ''}</div>`;
+  return { score, answers };
+}
+
 route(/^\/ear$/, async () => {
   const s = await settings();
   view.innerHTML = `<h1>Ear training</h1>
@@ -1228,84 +1353,17 @@ route(/^\/ear$/, async () => {
       <button class="primary" id="start">Start 10 questions</button>
     </div>
     <div id="q"></div>`;
-  let off = null;
-  const mid = Math.round((s.rangeLow + s.rangeHigh) / 2);
   $('#start').onclick = async () => {
-    const mode = $('#mode').value, lv = EAR_LEVELS[$('#lvl').value];
-    // Sing-back needs the mic; open it first so the same audio setup is used throughout (matters on iPhone).
-    let ctx;
-    try { ctx = mode === 'sb' ? await startMic() : await audioCtx(); } catch (e) { return toast(e.message, 6000); }
-    const answers = [];
-    const out = ctx.createGain(); out.connect(ctx.destination);
-    for (let i = 0; i < 10; i++) {
-      const base = mid - 5 + Math.floor(Math.random() * 8);
-      let item, correct;
-      if (mode === 'hl') {
-        const d = lv.hl[Math.floor(Math.random() * lv.hl.length)] * (Math.random() < 0.5 ? -1 : 1);
-        const play = () => { const t = ctx.currentTime + 0.05; playTone(ctx, out, base, t, 0.7); playTone(ctx, out, base + d, t + 0.85, 0.7); };
-        play();
-        const pick = await ask(`Question ${i + 1}/10: is the second note higher or lower?`, ['Higher', 'Lower'], play);
-        correct = (pick === 'Higher') === (d > 0); item = `hl ${Math.abs(d) < 1 ? Math.abs(d) * 100 + '¢' : Math.abs(d) + ' st'}`;
-        reveal(pick, d > 0 ? 'Higher' : 'Lower');
-      } else if (mode === 'iv') {
-        const iv = lv.ivs[Math.floor(Math.random() * lv.ivs.length)];
-        const play = () => { const t = ctx.currentTime + 0.05; playTone(ctx, out, base, t, 0.8); playTone(ctx, out, base + iv, t + 0.9, 0.8); };
-        play();
-        const pick = await ask(`Question ${i + 1}/10: what interval is that?`, lv.ivs.map(x => INTERVALS[x]), play);
-        correct = pick === INTERVALS[iv]; item = INTERVALS[iv];
-        reveal(pick, INTERVALS[iv]);
-      } else {
-        const target = s.rangeLow + 2 + Math.floor(Math.random() * Math.max(1, s.rangeHigh - s.rangeLow - 4));
-        const play = () => playTone(ctx, out, target, ctx.currentTime + 0.05, 1.2);
-        play();
-        await ask(`Question ${i + 1}/10: listen, then press Sing and hold the note for about 2 seconds.`, ['Sing'], play);
-        try { await startMic(); } catch (e) { toast(e.message, 6000); return; }
-        $('#q').querySelector('.dim').textContent = 'Listening…';
-        const got = await new Promise(res => {
-          const buf = []; const t0 = performance.now();
-          off = onPitch(f => {
-            if (f.midi !== null) buf.push(f.midi);
-            if (buf.length >= 120 || performance.now() - t0 > 5000) { off(); off = null; res(buf); }
-          });
-        });
-        const sung = got.length > 30 ? got.slice(Math.floor(got.length / 4)).sort((a, b) => a - b)[Math.floor(got.length * 3 / 8)] : null;
-        const c = sung === null ? null : centsOff(sung, target, true);
-        correct = c !== null && Math.abs(c) <= s.amberCents; item = noteName(target);
-        $('#q').innerHTML = `<div class="card"><p>Target ${noteName(target)}. ${c === null ? 'Didn’t hear enough singing.' : `You were ${Math.abs(Math.round(c))}¢ ${c > 0 ? 'sharp' : 'flat'}.`} ${correct ? '✅' : '❌'}</p></div>`;
-        await new Promise(r => setTimeout(r, 1600));
-      }
-      answers.push({ item, correct });
-      if (mode !== 'sb') await new Promise(r => setTimeout(r, 900));
-    }
-    const score = 100 * answers.filter(a => a.correct).length / answers.length;
-    const title = { hl: 'Higher or lower', iv: 'Intervals', sb: 'Sing it back' }[mode];
-    const fd = new FormData();
-    fd.append('meta', JSON.stringify({ kind: 'ear', ref: mode, title, score, details: { answers, level: $('#lvl').value } }));
-    api('/api/runs', { method: 'POST', body: fd }).catch(e => toast(e.message));
-    const missed = answers.filter(a => !a.correct).map(a => a.item);
-    $('#q').innerHTML = `<div class="card"><b>${Math.round(score)}%</b> correct.${missed.length ? ` <span class="dim">Missed: ${esc([...new Set(missed)].join(', '))}</span>` : ''}</div>`;
+    try { await runEarQuiz($('#q'), $('#mode').value, $('#lvl').value, s); } catch (e) { toast(e.message, 6000); }
   };
-  function ask(text, options, replay) {
-    return new Promise(res => {
-      $('#q').innerHTML = `<div class="card"><p class="dim">${esc(text)}</p><div class="choices">${options.map(o => `<button data-o="${esc(o)}">${esc(o)}</button>`).join('')}</div>
-        <p><button id="replay">↻ Play again</button></p></div>`;
-      $('#replay').onclick = replay;
-      $('#q').querySelectorAll('[data-o]').forEach(b => b.onclick = () => res(b.dataset.o));
-    });
-  }
-  function reveal(pick, right) {
-    $('#q').querySelectorAll('[data-o]').forEach(b => {
-      b.disabled = true;
-      if (b.dataset.o === right) b.classList.add('right'); else if (b.dataset.o === pick) b.classList.add('wrong');
-    });
-  }
-  cleanup = () => { off?.(); stopMic(); };
+  cleanup = () => { stopMic(); };
 }, 'ear');
 
 // ---- progress
 route(/^\/history$/, async () => {
   const [runs, st] = await Promise.all([api('/api/runs?limit=300'), api('/api/stats')]);
   view.innerHTML = `<h1>Progress</h1>
+    <div id="finale"></div>
     <div class="card"><canvas id="chart" style="width:100%;height:200px"></canvas></div>
     <h2>Accuracy by note</h2>
     <div class="card"><div class="heat" id="heat"></div><p class="small dim">Average note score across songs and drills. Darker cells haven't been sung enough to say.</p></div>
@@ -1388,4 +1446,4 @@ route(/^\/settings$/, async () => {
 
 api('/api/me').then(m => { if (m.login) $('#logout').hidden = false; }).catch(() => {});
 $('#logout').onclick = e => { if (!confirm('Sign out of Vocal Lab on this device?')) e.preventDefault(); };
-render();
+window.addEventListener('DOMContentLoaded', render);

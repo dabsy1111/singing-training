@@ -99,3 +99,16 @@ th { color: var(--dim); font-weight: 500; }
 .lyr-body span.sung { color: var(--accent); }
 textarea { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font: inherit; }
 @media (max-width: 600px) { .lyr-body { height: 110px; } .lyr-body p { font-size: 16px; } }
+.cues { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.cue { background: var(--panel2); border: 1px solid var(--line); border-radius: 99px; padding: 4px 10px; font-size: 13px; }
+.lessons { padding: 4px 6px; }
+.lesson-row { display: flex; gap: 10px; align-items: center; padding: 9px 8px; border-radius: 8px; color: var(--text); min-width: 0; }
+.lesson-row + .lesson-row { border-top: 1px solid var(--line); }
+a.lesson-row:hover { background: var(--panel2); }
+.lesson-row.locked { color: var(--dim); }
+.lesson-row.passed .lesson-icon { color: var(--green); }
+.lesson-row.open .lesson-icon { color: var(--accent); }
+.lesson-icon { width: 1.4em; text-align: center; }
+.card.pass { border-color: var(--green); }
+.card.nudge { border-color: var(--amber); }
+.lesson-banner { border-color: var(--accent); }

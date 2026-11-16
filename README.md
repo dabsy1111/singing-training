@@ -4,6 +4,8 @@ A self-hosted singing trainer modelled on vocalify.me, with one big addition: pa
 
 ## What it does
 
+- **Lessons.** A 47-lesson course in 8 units for total beginners: posture and breath, matching pitch, clean starts and steady notes, moving between notes, crossing the break, tone and tension, learning songs, then harmony and agility. Each lesson has a short why, on-screen cues, a scored exercise pitched to your range, and one targeted tip when you miss (flat, sharp, late starts, wobble, drooping ends). The next lesson unlocks at 70%. A placement check can start experienced singers at Unit 4 or 7, a 3-minute daily warm-up opens each session, and the app suggests a rest day when your scores dip or you've sung a lot. Lesson text and pass marks live in `app/static/lessons.js`.
+
 - **Songs from YouTube or files.** yt-dlp downloads the audio, Demucs (`htdemucs`) splits vocals from accompaniment, CREPE tracks the vocal pitch and turns it into notes. The recording's tuning is measured, so songs that aren't at A440 still grade fairly.
 - **Live pitch feedback.** Your voice is drawn over the target notes, 100 times a second, coloured green / amber / red by how many cents you're off. The HUD says "aim higher" or "aim lower".
 - **Practice controls.** Pick a section (or set it from the playhead), loop it, mix the accompaniment and guide vocal, and drag the track to move around.
@@ -129,6 +131,8 @@ app/db.py             SQLite
 app/auth.py           password sign-in (VL_PASSWORD), session cookie
 app/lyrics.py         LRCLIB lookup, Groq Whisper transcription, timing alignment
 app/static/           Front end, plain JS with no build step
+  lessons.js          the course: lesson text, cues, exercises, pass marks
+  course.js           lesson engine, exercise types, scoring and tips
   app.js              views, practice engine, scoring, drills, ear training
   pitch-worklet.js    YIN pitch detection on the audio thread
 ```

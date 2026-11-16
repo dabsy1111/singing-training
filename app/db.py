@@ -154,9 +154,24 @@ def delete_run(run_id):
 
 def get_settings():
     out = dict(DEFAULT_SETTINGS)
-    for row in q("SELECT key, value FROM settings"):
+    for row in q("SELECT key, value FROM settings WHERE key NOT LIKE 'kv:%'"):
         out[row["key"]] = json.loads(row["value"])
     return out
+
+
+def get_kv(key, default=None):
+    row = q("SELECT value FROM settings WHERE key=?", (f"kv:{key}",), one=True)
+    return json.loads(row["value"]) if row else default
+
+
+def put_kv(key, value):
+    execute("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (f"kv:{key}", json.dumps(value)))
+    return value
+
+
+def get_settings_raw_keys():
+    return [r["key"] for r in q("SELECT key FROM settings")]
 
 
 def put_settings(values: dict):
