@@ -35,7 +35,12 @@ configs:
     # HTTPS on the LAN using Caddy's own certificate authority.
     # To add a password, put a basic_auth block above reverse_proxy
     # (hash from: docker exec vocal-lab-caddy caddy hash-password).
+    # default_sni: browsers don't say which site they want when you browse to an IP address,
+    # and inside Docker Caddy can't tell which IP you used, so point it at VL_HOST.
     content: |
+      {
+        default_sni ${VL_HOST:-localhost}
+      }
       https://${VL_HOST:-localhost} {
         tls internal
         request_body {
