@@ -1373,7 +1373,32 @@ route(/^\/history$/, async () => {
     ${runs.map(r => `<tr data-id="${r.id}"><td class="small">${fmtDate(r.created)}</td><td>${esc(r.title || r.ref)} <span class="dim small">${r.kind}</span></td><td>${r.score == null ? '–' : Math.round(r.score) + '%'}</td>
       <td class="row" style="justify-content:flex-end">${r.take ? `<button data-play="${esc(r.take)}">▶ Take</button>` : ''}<button data-del class="danger">✕</button></td></tr>`).join('')}
     </table>${runs.length ? '' : '<p class="dim">Nothing yet. Sing something.</p>'}</div>
+    <h2>Start fresh</h2>
+    <div class="card">
+      <p class="small dim">Clear what testing has filled up. Your songs, lyrics, range, timing and settings are kept.</p>
+      <label class="row small"><input type="checkbox" id="rsRuns" checked> Scores, history and recorded takes</label>
+      <label class="row small" style="margin-top:6px"><input type="checkbox" id="rsCourse"> Lesson progress (back to lesson 1.1, home note and course song cleared)</label>
+      <div class="row" style="margin-top:10px"><button class="danger" id="reset">Reset…</button></div>
+    </div>
     <audio id="player" hidden></audio>`;
+  $('#reset').onclick = async () => {
+    const runs = $('#rsRuns').checked, lessons = $('#rsCourse').checked;
+    if (!runs && !lessons) return toast('Tick what you want to reset');
+    const what = [runs && 'all scores, history and recorded takes', lessons && 'all lesson progress'].filter(Boolean).join(' and ');
+    if (!confirm(`Delete ${what}? This can’t be undone.`)) return;
+    try {
+      if (runs) {
+        await api('/api/runs', { method: 'DELETE' });
+        try { Object.keys(localStorage).filter(k => k.startsWith('vl-sung-')).forEach(k => localStorage.removeItem(k)); } catch { /* ignore */ }
+      }
+      if (lessons) {
+        await api('/api/course', { method: 'PUT', json: {} });
+        if (typeof C !== 'undefined') C = null;   // reload fresh progress next time
+      }
+      toast('Reset done');
+      render();
+    } catch (e) { toast('Reset failed: ' + e.message); }
+  };
   // heatmap
   const keys = Object.keys(st.notes).map(Number);
   const lo = keys.length ? Math.floor(Math.min(...keys) / 12) * 12 : 48, hi = keys.length ? Math.ceil((Math.max(...keys) + 1) / 12) * 12 - 1 : 71;

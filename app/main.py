@@ -357,6 +357,15 @@ def run(run_id: int):
     return r
 
 
+@app.delete("/api/runs")
+def delete_all_runs():
+    """Wipe all scores and recorded takes. Songs, settings and lesson progress are kept."""
+    takes = db.delete_all_runs()
+    for t in takes:
+        (TAKES_DIR / t).unlink(missing_ok=True)
+    return {"ok": True, "deleted_takes": len(takes)}
+
+
 @app.delete("/api/runs/{run_id}")
 def delete_run(run_id: int):
     r = db.get_run(run_id)

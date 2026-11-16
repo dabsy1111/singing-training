@@ -150,6 +150,12 @@ def delete_run(run_id):
     execute("DELETE FROM runs WHERE id=?", (run_id,))
 
 
+def delete_all_runs():
+    takes = [r["take"] for r in q("SELECT take FROM runs WHERE take IS NOT NULL")]
+    execute("DELETE FROM runs")
+    return takes
+
+
 # settings ----------------------------------------------------------------
 
 def get_settings():
