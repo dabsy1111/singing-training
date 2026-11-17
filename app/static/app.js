@@ -254,7 +254,8 @@ function findNote(notes, t) {
 // ---------------------------------------------------------------- practice engine
 /* A Practice drives one run: it plays audio, listens, scores and draws.
  * target: { notes:[{t0,t1,midi}], contour?, hop?, duration, range:[lo,hi] }
- * audio:  { buffers: {accomp, vocals} } for songs, or { synth: true } for drills */
+ * audio:  { buffers: {accomp, backing?, vocals}, rate? } for songs, or { synth: true } for drills
+ *         rate < 1 plays a slowed (pitch-kept) copy; note times stay in original song seconds */
 class Practice {
   constructor(el, target, audio, opts) {
     this.el = el; this.target = target; this.audio = audio; this.opts = opts;
@@ -264,6 +265,7 @@ class Practice {
     this.tune = (target.tuning || 0) / 100;   // song tuning offset, in semitones
     window.__practice = this; // handy for debugging from the console
     this.pos = opts.start || 0;        // song time when stopped
+    this.rate = 1;                     // playback speed (audio.rate), set at play()
     this.playing = false;
     this.trail = [];
     this.canvas = document.createElement('canvas');
@@ -298,13 +300,15 @@ class Practice {
 
   now() {
     if (!this.playing) return this.pos;
-    return this.startPos + (A.ctx.currentTime - this.startCtx);
+    return this.startPos + (A.ctx.currentTime - this.startCtx) * this.rate;
   }
 
   async play({ from, to }) {
     const ctx = await startMic();
     const s = this.opts.settings;
     this.section = { from, to };
+    // rate < 1 = slowed-down audio: song time runs at rate × real time. Latency stays in real seconds.
+    const rate = this.rate = this.audio.rate || 1;
     this.latency = autoLatency() + deviceLatencyMs() / 1000;
     for (const n of this.notes) if (n.t1 > from && n.t0 < to) { n.frames = []; n.result = null; }
     this.trail = [];
@@ -317,16 +321,16 @@ class Practice {
         if (!buf) continue;
         const g = ctx.createGain(); g.gain.value = this.opts.volumes[key]; g.connect(this.master);
         const src = ctx.createBufferSource(); src.buffer = buf; src.connect(g);
-        src.start(this.startCtx, from, Math.max(0, to - from));
+        src.start(this.startCtx, from / rate, Math.max(0, to - from) / rate);
         this.nodes.push(src); this['gain_' + key] = g;
       }
     } else {
       const g = ctx.createGain(); g.gain.value = this.opts.volumes.guide ?? 0.8; g.connect(this.master); this.gain_guide = g;
       const cue = ctx.createGain(); cue.gain.value = 0.9; cue.connect(this.master);
       for (const c of this.target.cues || []) if (c.t0 >= from && c.t0 < to)
-        this.nodes.push(...playTone(ctx, cue, c.midi, this.startCtx + c.t0 - from, c.t1 - c.t0, 0.22));
+        this.nodes.push(...playTone(ctx, cue, c.midi, this.startCtx + (c.t0 - from) / rate, (c.t1 - c.t0) / rate, 0.22));
       for (const n of this.notes) if (n.t0 >= from && n.t0 < to && n.guide !== false)
-        this.nodes.push(...playTone(ctx, g, n.midi, this.startCtx + n.t0 - from, n.t1 - n.t0, 0.2));
+        this.nodes.push(...playTone(ctx, g, n.midi, this.startCtx + (n.t0 - from) / rate, (n.t1 - n.t0) / rate, 0.2));
     }
     this.playing = true;
     this.unsub = onPitch(f => this.onFrame(f));
@@ -340,7 +344,7 @@ class Practice {
       } catch { this.recorder = null; }
     }
     clearTimeout(this.endTimer);
-    this.endTimer = setTimeout(() => this.stop(true), (to - from + lead + 0.3) * 1000);
+    this.endTimer = setTimeout(() => this.stop(true), ((to - from) / rate + lead + 0.3) * 1000);
   }
 
   setShift(k) { this.setPart(this.target.notes, k, k); }
@@ -360,7 +364,7 @@ class Practice {
 
   onFrame(f) {
     if (!this.playing) return;
-    const t = this.startPos + (f.t - this.startCtx) - this.latency;
+    const t = this.startPos + (f.t - this.startCtx - this.latency) * this.rate;
     if (t < this.section.from - 0.2 || t > this.section.to) return;
     const s = this.opts.settings;
     const n = findNote(this.notes, t);
@@ -378,7 +382,7 @@ class Practice {
 
   async stop(finished = false) {
     if (!this.playing) return null;
-    const reached = Math.min(this.now() - (this.latency || 0), this.section.to);
+    const reached = Math.min(this.now() - (this.latency || 0) * this.rate, this.section.to);
     addSungSeconds(Math.max(0, reached - this.section.from));
     this.playing = false;
     clearTimeout(this.endTimer);
@@ -402,7 +406,8 @@ class Practice {
     const bias = biases.length ? biases.reduce((a, b) => a + b, 0) / biases.length : null;
     const off = this.trail.length > 100 ? bestOffset(this.notes, this.trail, s, this.tune) : { off: 0 };
     return {
-      finished, score, take, bias, timingOffset: off.off,
+      finished, score, take, bias, timingOffset: off.off / this.rate,   // real seconds, for the device setting
+      speed: Math.round(this.rate * 100),
       notes: graded.map(n => ({ midi: n.midi, t0: n.t0, score: +n.result.score.toFixed(3), bias: n.result.bias === null ? null : Math.round(n.result.bias) })),
       section: this.section,
     };
@@ -802,10 +807,16 @@ route(/^\/$/, async () => {
         <span class="grow small">${old.length === 1 ? '1 song was' : `${old.length} songs were`} worked out with the older melody finder. The new one separates the lead singer from backing vocals and gets the tune right more often. Lyrics, scores and a key you set yourself are kept.</span>
         <button data-reall>Re-analyse ${old.length === 1 ? 'it' : 'all'}</button>
       </div>` : '';
-    const btn = $('#outdated [data-reall]');
+    const noBack = songs.filter(x => x.no_backing && x.status === 'ready');
+    if (!old.length && noBack.length) $('#outdated').innerHTML = `
+      <div class="card row">
+        <span class="grow small">${noBack.length === 1 ? '1 song has' : `${noBack.length} songs have`} the backing vocals mixed into the music. Re-analyse to give them their own volume slider (a few minutes per song; lyrics, scores and your key are kept).</span>
+        <button data-split>Split ${noBack.length === 1 ? 'it' : 'them'}</button>
+      </div>`;
+    const btn = $('#outdated [data-reall]') || $('#outdated [data-split]');
     if (btn) btn.onclick = async () => {
       btn.disabled = true;
-      try { await api('/api/songs/reanalyse-outdated', { method: 'POST' }); } catch (err) { toast(err.message); }
+      try { await api(btn.dataset.split !== undefined ? '/api/songs/split-backing' : '/api/songs/reanalyse-outdated', { method: 'POST' }); } catch (err) { toast(err.message); }
       refresh();
     };
     const busy = songs.some(x => x.status === 'queued' || x.status === 'processing');
@@ -1023,6 +1034,7 @@ function harmonise(notes, key, steps) {
   });
 }
 const PREF_KEY = (id, what) => `vl-${what}-${id}`;
+const SPEEDS = [100, 90, 80, 75, 70, 60, 50];   // must match pipeline.SPEEDS
 function songPref(id, what, dflt) { try { return localStorage.getItem(PREF_KEY(id, what)) ?? dflt; } catch { return dflt; } }
 function setSongPref(id, what, v) { try { localStorage.setItem(PREF_KEY(id, what), v); } catch { /* ignore */ } }
 
@@ -1034,6 +1046,7 @@ route(/^\/song\/([0-9a-f]{12})(?:\?lesson=(\d\.\d))?$/, async (id, lessonId) => 
   let key = an.key || null;
   let part = songPref(id, 'part', 'melody'); if (!PARTS[part]) part = 'melody';
   let tr = Number(songPref(id, 'tr', '0')) || 0;
+  let speed = Number(songPref(id, 'speed', '100')); if (!SPEEDS.includes(speed)) speed = 100;
   let autoShift = 0;
   const trLabel = n => n === 0 ? 'Original key' : `${n > 0 ? '+' : '−'}${Math.abs(n)} semitone${Math.abs(n) > 1 ? 's' : ''}${key ? ` (${keyName({ ...key, tonic: key.tonic + n })})` : ''}`;
   view.innerHTML = `
@@ -1066,22 +1079,25 @@ route(/^\/song\/([0-9a-f]{12})(?:\?lesson=(\d\.\d))?$/, async (id, lessonId) => 
       <label>Sing it <select id="oct"></select></label>
       <label>Music key <select id="tr"></select></label>
       <label>Song key <select id="key"></select></label>
+      <label>Speed <select id="speed">${SPEEDS.map(v => `<option value="${v}">${v === 100 ? 'Normal speed' : `${v}% (slower, same pitch)`}</option>`).join('')}</select></label>
       <p class="dim small span" id="octInfo"></p>
     </div>
     <div class="controls">
-      <label>Music <input type="range" id="vAcc" min="0" max="1.2" step="0.05" value="0.9"></label>
+      <label>Music <input type="range" id="vAcc" min="0" max="1.2" step="0.05" value="${songPref('all', 'vAcc', '0.9')}"></label>
+      ${an.backing ? `<label>Backing vocals <input type="range" id="vBack" min="0" max="1.2" step="0.05" value="${songPref('all', 'vBack', '0.9')}"></label>` : ''}
       <label>Guide vocal <input type="range" id="vVoc" min="0" max="1.2" step="0.05" value="0.3"></label>
       <label><input type="checkbox" id="octFree" ${s.octaveFree ? 'checked' : ''}> Any octave counts</label>
       <label><input type="checkbox" id="contour" checked> Show melody line</label>
       <label><input type="checkbox" id="showLyr" ${songPref('all', 'lyrics', '1') === '1' ? 'checked' : ''}> Show lyrics</label>
     </div>
     <div class="legend small"><span><i style="background:var(--green)"></i>within ${s.greenCents}¢</span><span><i style="background:var(--amber)"></i>within ${s.amberCents}¢</span><span><i style="background:var(--red)"></i>off</span><span>Drag the track to move around when stopped. Headphones work best.</span></div>
+    ${an.backing || !an.lead_split ? '' : `<p class="dim small" id="backHint">Want the backing vocals on their own slider? <button id="splitBack">Re-analyse this song</button> (takes a few minutes; lyrics, key and scores are kept).</p>`}
     ${Math.abs(an.tuning || 0) >= 10 ? `<p class="dim small">Recording is tuned ${an.tuning > 0 ? '+' : ''}${an.tuning}¢ from A440; targets follow it.</p>` : ''}
     <div id="res"></div>`;
   const stage = $('#stage');
   const parseT = v => { const p = String(v).split(':').map(Number); return p.length === 2 ? p[0] * 60 + p[1] : p[0] || 0; };
   const sec = () => ({ from: clamp(parseT($('#from').value), 0, an.duration), to: clamp(parseT($('#to').value), 0, an.duration) });
-  const vols = { accomp: +$('#vAcc').value, vocals: +$('#vVoc').value };
+  const vols = { accomp: +$('#vAcc').value, backing: +($('#vBack')?.value ?? 0.9), vocals: +$('#vVoc').value };
   const P = new Practice(stage, { ...an, duration: an.duration }, { buffers: {} }, {
     settings: s, volumes: vols, sectionRef: sec, showContour: () => $('#contour').checked, start: firstIn,
   });
@@ -1135,13 +1151,18 @@ route(/^\/song\/([0-9a-f]{12})(?:\?lesson=(\d\.\d))?$/, async (id, lessonId) => 
   async function loadAudio() {
     const mine = ++audioReq;
     $('#play').disabled = true;
-    $('#loadmsg').textContent = tr ? 'Shifting the music to the new key (first time takes a few seconds)…' : 'Loading audio…';
+    $('#loadmsg').textContent = speed !== 100 ? 'Slowing the music down (first time takes up to half a minute)…'
+      : tr ? 'Shifting the music to the new key (first time takes a few seconds)…' : 'Loading audio…';
     try {
-      let urls = { accompaniment: `/media/songs/${id}/accompaniment.mp3`, vocals: `/media/songs/${id}/vocals.mp3` };
-      if (tr) urls = await api(`/api/songs/${id}/transpose`, { method: 'POST', json: { semitones: tr } });
-      const [accomp, vocals] = await Promise.all([loadBuffer(urls.accompaniment), loadBuffer(urls.vocals)]);
+      const m = `/media/songs/${id}/`;
+      let urls = an.backing ? { band: m + 'band.mp3', backing: m + 'backing.mp3', vocals: m + 'vocals.mp3' }
+        : { accompaniment: m + 'accompaniment.mp3', vocals: m + 'vocals.mp3' };
+      if (tr || speed !== 100) urls = await api(`/api/songs/${id}/audio`, { method: 'POST', json: { semitones: tr, speed } });
+      const [accomp, backing, vocals] = await Promise.all([loadBuffer(urls.band || urls.accompaniment),
+        urls.band && urls.backing ? loadBuffer(urls.backing) : null, loadBuffer(urls.vocals)]);
       if (mine !== audioReq) return;
-      P.audio.buffers = { accomp, vocals };
+      P.audio.buffers = { accomp, backing, vocals };
+      P.audio.rate = speed / 100;
       $('#loadmsg').textContent = ''; $('#play').disabled = false;
     } catch (e) { if (mine === audioReq) $('#loadmsg').textContent = 'Audio failed to load: ' + e.message; }
   }
@@ -1149,6 +1170,15 @@ route(/^\/song\/([0-9a-f]{12})(?:\?lesson=(\d\.\d))?$/, async (id, lessonId) => 
     if (busy()) { $('#tr').value = String(tr); return; }
     tr = Number($('#tr').value); setSongPref(id, 'tr', String(tr)); applyPart(); loadAudio();
   };
+  $('#speed').value = String(speed);
+  $('#speed').onchange = () => {
+    if (busy()) { $('#speed').value = String(speed); return; }
+    speed = Number($('#speed').value); setSongPref(id, 'speed', String(speed)); loadAudio();
+  };
+  $('#splitBack') && ($('#splitBack').onclick = async () => {
+    if (!confirm('Re-analyse this song to split out the backing vocals? It takes a few minutes and the song can’t be sung until it’s done.')) return;
+    try { await api(`/api/songs/${id}/reanalyse`, { method: 'POST' }); location.hash = '#/'; } catch (e) { toast(e.message); }
+  });
 
   fillKeySelects(); applyPart(); loadAudio();
   if (!key) {
@@ -1174,7 +1204,8 @@ route(/^\/song\/([0-9a-f]{12})(?:\?lesson=(\d\.\d))?$/, async (id, lessonId) => 
     recording: () => !!s.recordTakes,
   })) : null;
   $('#showLyr').onchange = e => { setSongPref('all', 'lyrics', e.target.checked ? '1' : '0'); $('#lyr').hidden = !e.target.checked; };
-  $('#vAcc').oninput = e => { vols.accomp = +e.target.value; P.setVolume('accomp', vols.accomp); };
+  $('#vAcc').oninput = e => { vols.accomp = +e.target.value; P.setVolume('accomp', vols.accomp); setSongPref('all', 'vAcc', e.target.value); };
+  $('#vBack') && ($('#vBack').oninput = e => { vols.backing = +e.target.value; P.setVolume('backing', vols.backing); setSongPref('all', 'vBack', e.target.value); });
   $('#vVoc').oninput = e => { vols.vocals = +e.target.value; P.setVolume('vocals', vols.vocals); };
   $('#octFree').onchange = e => { s.octaveFree = e.target.checked; saveSettings({ octaveFree: s.octaveFree }); };
   $('#setA').onclick = () => { $('#from').value = fmtTime(P.now()); };
@@ -1199,9 +1230,10 @@ route(/^\/song\/([0-9a-f]{12})(?:\?lesson=(\d\.\d))?$/, async (id, lessonId) => 
     if (res.score !== null && res.notes.length >= 4) {
       const k = P.shift - tr;
       const bits = [part !== 'melody' ? PARTS[part].label.replace('Harmony: ', '') : null,
-        tr ? `${tr > 0 ? '+' : '−'}${Math.abs(tr)} st` : null, k ? octaveLabel(k) : null].filter(Boolean);
+        tr ? `${tr > 0 ? '+' : '−'}${Math.abs(tr)} st` : null, k ? octaveLabel(k) : null,
+        res.speed && res.speed !== 100 ? `${res.speed}% speed` : null].filter(Boolean);
       runP = saveRun('song', id, song.title + (bits.length ? ` (${bits.join(', ')})` : ''), res,
-        { shift: P.shift, part, transpose: tr, octave: k, key, lesson: lessonId || undefined })
+        { shift: P.shift, part, transpose: tr, octave: k, key, speed: res.speed, lesson: lessonId || undefined })
         .catch(e => { toast('Couldn’t save run: ' + e.message); return null; });
     }
     lessonCtl?.onResult({ ...res, finished }, runP);

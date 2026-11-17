@@ -4,6 +4,7 @@ Steps for each song:
   1. fetch     - yt-dlp (or the uploaded file) -> source.wav
   2. separate  - Demucs htdemucs, two stems   -> vocals.wav + no_vocals.wav
   3. lead      - UVR-MDX-NET Karaoke 2 on the vocal stem -> lead.wav + backing.wav
+                 (band.mp3 and backing.mp3 are kept apart too, for separate faders)
                  (harmonies, doubles and gang vocals go back into the music)
   4. analyse   - SwiftF0 pitch tracking on the lead vocal -> contour + note list
   5. encode    - mp3s the browser plays (accompaniment, vocal guide, original)
@@ -119,11 +120,11 @@ def process(song_id: str, job: dict):
         stage(song_id, f"Splitting vocals from music (Demucs, ~{max(1, round(duration / 60 * 0.6))} min on CPU)")
         separate(src, d)
 
-    guide, music = vocals, accomp
+    guide, music, backing = vocals, accomp, None
     lead_split = False
     if LEAD_SPLIT and KARAOKE_MODEL.exists():
         stage(song_id, f"Separating the lead singer from backing vocals (~{max(1, round(duration / 60 * 0.5))} min)")
-        guide, music = split_lead(d, vocals, accomp)
+        guide, music, backing = split_lead(d, vocals, accomp)
         lead_split = True
     elif LEAD_SPLIT:
         log.warning("lead/backing split skipped: %s not found", KARAOKE_MODEL)
@@ -134,21 +135,28 @@ def process(song_id: str, job: dict):
     analysis["v"] = ANALYSIS_VERSION
     analysis["lead_split"] = lead_split
     analysis["pitch_model"] = PITCH_MODEL
+    analysis["backing"] = backing is not None   # band.mp3 + backing.mp3 exist, for a separate fader
     if old.get("key") and old["key"].get("detected") is False:
         analysis["key"] = old["key"]    # keep a key the user set by hand
     (d / "analysis.json").write_text(json.dumps(analysis, separators=(",", ":")))
 
     stage(song_id, "Encoding audio for the browser")
-    for f in d.glob("*.t*.mp3"):        # key-shifted copies of the old audio
+    for f in d.glob("*.*.mp3"):         # key/speed-shifted copies of the old audio
         f.unlink(missing_ok=True)
     encode_mp3(music, d / "accompaniment.mp3", channels=2)
+    if backing is not None:              # instruments and backing vocals apart, for the faders
+        encode_mp3(backing[0], d / "band.mp3", channels=2)
+        encode_mp3(backing[1], d / "backing.mp3", channels=2)
+    else:
+        for f in ("band.mp3", "backing.mp3"):
+            (d / f).unlink(missing_ok=True)
     encode_mp3(guide, d / "vocals.mp3", channels=1)
     if not (d / "original.mp3").exists() or not job.get("reanalyse"):
         encode_mp3(src, d / "original.mp3", channels=2)
 
     # Keep the stems' wavs only if asked; they're big.
     if os.environ.get("KEEP_WAV", "0") != "1":
-        for f in (vocals, accomp, d / "lead.wav", d / "music.wav"):
+        for f in (vocals, accomp, d / "lead.wav", d / "music.wav", d / "backing.wav", d / "band.wav"):
             f.unlink(missing_ok=True)
 
     if "key" not in analysis:
@@ -281,7 +289,8 @@ def separate(src: Path, d: Path):
 # lead / backing vocals
 # --------------------------------------------------------------------------
 
-def split_lead(d: Path, vocals: Path, accomp: Path) -> tuple[Path, Path]:
+def split_lead(d: Path, vocals: Path, accomp: Path) -> tuple[Path, Path, tuple[Path, Path]]:
+    # returns lead, music (band + backing), (band, backing)
     """Lead vocal becomes the guide and the melody source; backing vocals join the music.
 
     On a studio vs live test (Holding Absence, Kyoto Snow) this took studio/live
@@ -299,12 +308,16 @@ def split_lead(d: Path, vocals: Path, accomp: Path) -> tuple[Path, Path]:
     n = min(len(music), backing.shape[1])
     music = music[:n] + backing.T[:n]
     peak = float(np.abs(music).max())
-    if peak > 0.999:   # don't clip where the backing vocals land on loud music
-        music *= 0.999 / peak
+    scale = 0.999 / peak if peak > 0.999 else 1.0   # don't clip where the backing vocals land on loud music
     lead_wav, music_wav = d / "lead.wav", d / "music.wav"
+    band_wav, backing_wav = d / "band.wav", d / "backing.wav"
     sf.write(str(lead_wav), lead.T, sr, subtype="FLOAT")
-    sf.write(str(music_wav), music, sr, subtype="FLOAT")
-    return lead_wav, music_wav
+    sf.write(str(music_wav), music * scale, sr, subtype="FLOAT")
+    # the same two parts kept apart (same scale, so they add up to music.wav) for separate faders
+    band, _ = sf.read(str(accomp), dtype="float32", always_2d=True)
+    sf.write(str(band_wav), band[:n] * scale, sr, subtype="FLOAT")
+    sf.write(str(backing_wav), backing.T[:n] * scale, sr, subtype="FLOAT")
+    return lead_wav, music_wav, (band_wav, backing_wav)
 
 
 # --------------------------------------------------------------------------
@@ -517,26 +530,72 @@ def detect_key(accompaniment: Path, notes: list) -> dict:
 _tlocks: dict[str, threading.Lock] = {}
 _tlocks_guard = threading.Lock()
 
+SPEEDS = (50, 60, 70, 75, 80, 90, 100)   # percent; slowed copies keep their pitch
+MAX_VARIANT_FILES = 40                     # per song; oldest shifted copies are deleted past this
 
-def transposed(song_id: str, semitones: int) -> dict:
+
+def stems(song_id: str) -> list[str]:
+    """Files the browser plays. Songs analysed since the backing split have band + backing."""
+    d = song_dir(song_id)
+    if (d / "band.mp3").exists() and (d / "backing.mp3").exists():
+        return ["band", "backing", "vocals"]
+    return ["accompaniment", "vocals"]
+
+
+def variant_tag(semitones: int, speed: int) -> str:
+    return (f".t{semitones}" if semitones else "") + (f".s{speed}" if speed != 100 else "")
+
+
+def audio_variant(song_id: str, semitones: int = 0, speed: int = 100) -> dict:
+    """URLs for each stem in a key and at a speed; shifted copies are made once, then cached."""
     from concurrent.futures import ThreadPoolExecutor
 
     d = song_dir(song_id)
+    tag = variant_tag(semitones, speed)
+    names = stems(song_id)
+    if not tag:
+        return {stem: f"/media/songs/{song_id}/{stem}.mp3" for stem in names}
     with _tlocks_guard:
-        lock = _tlocks.setdefault(f"{song_id}:{semitones}", threading.Lock())
+        lock = _tlocks.setdefault(f"{song_id}:{tag}", threading.Lock())
 
-    def one(stem, extra):
-        name = f"{stem}.t{semitones}.mp3"
+    def one(stem):
+        name = f"{stem}{tag}.mp3"
         dst = d / name
         if not dst.exists():
             tmp = d / f".{name}"
-            ratio = 2 ** (semitones / 12)
+            af = [f"tempo={speed / 100:.4f}"] if speed != 100 else []
+            if semitones:
+                af.append(f"pitch={2 ** (semitones / 12):.6f}")
+            af.append("pitchq=quality")
+            if stem in ("vocals", "backing"):
+                af.append("formant=preserved")
+            if speed != 100:
+                af.append("transients=smooth")   # fewer clicks when slowed right down
             run(["ffmpeg", "-y", "-v", "error", "-i", str(d / f"{stem}.mp3"),
-                 "-af", f"rubberband=pitch={ratio:.6f}:pitchq=quality{extra}",
-                 "-ar", str(PLAYBACK_RATE), "-b:a", "128k" if stem == "accompaniment" else "96k",
+                 "-af", "rubberband=" + ":".join(af),
+                 "-ar", str(PLAYBACK_RATE), "-b:a", "96k" if stem == "vocals" else "128k",
                  "-f", "mp3", str(tmp)])
             tmp.rename(dst)
+        else:
+            dst.touch()   # recently used, so the cache keeps it
         return stem, f"/media/songs/{song_id}/{name}"
 
-    with lock, ThreadPoolExecutor(2) as pool:   # music and guide vocal side by side
-        return dict(pool.map(lambda a: one(*a), (("accompaniment", ""), ("vocals", ":formant=preserved"))))
+    with lock, ThreadPoolExecutor(len(names)) as pool:
+        out = dict(pool.map(one, names))
+    _prune_variants(d, keep={f"{s}{tag}.mp3" for s in names})
+    return out
+
+
+def transposed(song_id: str, semitones: int) -> dict:
+    """Old API: music + guide in another key."""
+    out = audio_variant(song_id, semitones, 100)
+    out.setdefault("accompaniment", out.get("band"))
+    return out
+
+
+def _prune_variants(d: Path, keep: set[str]):
+    files = sorted((f for f in d.glob("*.*.mp3") if not f.name.startswith(".")),
+                   key=lambda f: f.stat().st_mtime, reverse=True)
+    for f in files[MAX_VARIANT_FILES:]:
+        if f.name not in keep:
+            f.unlink(missing_ok=True)

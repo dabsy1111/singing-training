@@ -91,6 +91,11 @@ class TransposeIn(BaseModel):
     semitones: int
 
 
+class AudioIn(BaseModel):
+    semitones: int = 0
+    speed: int = 100
+
+
 class LyricsFind(BaseModel):
     source: str = "auto"          # auto | lrclib | groq
     artist: str | None = None
@@ -117,7 +122,8 @@ def _analysis_summary(song_id, p):
     c = _fit_cache.get(song_id)
     if not c or c[0] != mt:
         an = json.loads(p.read_text())
-        c = (mt, [(n["midi"], n["t1"] - n["t0"]) for n in an.get("notes", [])], an.get("v", 1))
+        c = (mt, [(n["midi"], n["t1"] - n["t0"]) for n in an.get("notes", [])], an.get("v", 1),
+             bool(an.get("lead_split")) and not an.get("backing"))
         _fit_cache[song_id] = c
     return c
 
@@ -125,6 +131,11 @@ def _analysis_summary(song_id, p):
 def _analysis_version(song_id):
     p = pipeline.song_dir(song_id) / "analysis.json"
     return _analysis_summary(song_id, p)[2] if p.exists() else None
+
+
+def _no_backing(song_id):
+    p = pipeline.song_dir(song_id) / "analysis.json"
+    return _analysis_summary(song_id, p)[3] if p.exists() else False
 
 
 def best_octave(notes, lo, hi):
@@ -150,8 +161,10 @@ def songs():
             if notes:
                 r["best_shift"], r["fit"] = best_octave(notes, st["rangeLow"], st["rangeHigh"])
             v = _analysis_version(r["id"])
-            r["outdated"] = bool(v and v < pipeline.ANALYSIS_VERSION
-                                 and (pipeline.song_dir(r["id"]) / "source.wav").exists())
+            has_src = (pipeline.song_dir(r["id"]) / "source.wav").exists()
+            r["outdated"] = bool(v and v < pipeline.ANALYSIS_VERSION and has_src)
+            # analysed before backing vocals were kept as their own stem
+            r["no_backing"] = bool(not r["outdated"] and has_src and _no_backing(r["id"]))
     return rows
 
 
@@ -245,6 +258,17 @@ def reanalyse_outdated():
     return {"queued": done}
 
 
+@app.post("/api/songs/split-backing")
+def split_backing_all():
+    """Re-analyse songs made before backing vocals got their own fader."""
+    done = []
+    for r in songs():
+        if r.get("no_backing") and r["status"] == "ready":
+            _reanalyse(r["id"])
+            done.append(r["id"])
+    return {"queued": done}
+
+
 @app.delete("/api/songs/{song_id}")
 def delete_song(song_id: str):
     s = db.get_song(song_id)
@@ -303,6 +327,18 @@ def transpose(song_id: str, body: TransposeIn):
     return pipeline.transposed(song_id, body.semitones)
 
 
+@app.post("/api/songs/{song_id}/audio")
+def song_audio(song_id: str, body: AudioIn):
+    s = db.get_song(song_id)
+    if not s or s["status"] != "ready":
+        raise HTTPException(404, "Song isn't ready")
+    if not -7 <= body.semitones <= 7:
+        raise HTTPException(400, "Choose between -7 and +7 semitones")
+    if body.speed not in pipeline.SPEEDS:
+        raise HTTPException(400, f"Speed must be one of {', '.join(map(str, pipeline.SPEEDS))}%")
+    return pipeline.audio_variant(song_id, body.semitones, body.speed)
+
+
 def _ready_song(song_id):
     s = db.get_song(song_id)
     if not s or s["status"] != "ready":
@@ -354,7 +390,7 @@ def delete_lyrics(song_id: str):
 
 @app.get("/media/songs/{song_id}/{name}")
 def song_media(song_id: str, name: str):
-    if not re.fullmatch(r"(accompaniment|vocals|original)(\.t-?[1-7])?\.mp3", name) or not re.fullmatch(r"[0-9a-f]{12}", song_id):
+    if not re.fullmatch(r"(accompaniment|band|backing|vocals|original)(\.t-?[1-7])?(\.s[5-9]\d)?\.mp3", name) or not re.fullmatch(r"[0-9a-f]{12}", song_id):
         raise HTTPException(404)
     p = pipeline.song_dir(song_id) / name
     if not p.exists():

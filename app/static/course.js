@@ -470,7 +470,7 @@ function videosHTML(id) {
     ${vids.map(v => `<div class="video" data-vid="${esc(v.id)}">
       <button class="vthumb" aria-label="Play ${esc(v.title)}"><img loading="lazy" alt="" src="https://i.ytimg.com/vi/${esc(v.id)}/mqdefault.jpg"><span class="vplay">▶</span><span class="vlen">${esc(v.len || '')}</span></button>
       <div class="vtext"><b>${esc(v.title)}</b><div class="small dim">${esc(v.by)}</div><div class="small">${esc(v.note || '')}</div>
-        <a class="small" href="https://www.youtube.com/watch?v=${esc(v.id)}" target="_blank" rel="noopener">Open in YouTube</a></div>
+        <a class="small" href="https://www.youtube.com/watch?v=${esc(v.id)}${v.start ? `&t=${v.start}s` : ''}" target="_blank" rel="noopener">Open in YouTube</a></div>
     </div>`).join('')}
   </details>`;
 }
@@ -478,13 +478,22 @@ function bindVideos(root) {
   root.querySelectorAll('.video .vthumb').forEach(b => b.onclick = () => {
     const box = b.closest('.video'), id = box.dataset.vid;
     const f = document.createElement('iframe');
-    f.src = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(id)}?autoplay=1&playsinline=1&rel=0`;
+    const v = Object.values(LESSON_VIDEOS).flat().find(x => x.id === id) || {};
+    const src = at => `https://www.youtube-nocookie.com/embed/${encodeURIComponent(id)}?autoplay=1&playsinline=1&rel=0${at ? `&start=${at}` : ''}`;
+    f.src = src(v.start);
     f.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen';
     f.allowFullscreen = true;
     f.referrerPolicy = 'strict-origin-when-cross-origin';   // YouTube refuses embeds that send no referrer
     f.title = box.querySelector('.vtext b').textContent;
     b.replaceWith(f);
     box.classList.add('playing');
+    if (v.parts?.length) {   // jump buttons from the video's chapters
+      const bar = document.createElement('div'); bar.className = 'vparts small';
+      bar.innerHTML = `<span class="dim">Jump to</span>` + [[0, 'Start'], ...v.parts].map(([t, label]) =>
+        `<button data-t="${t}">${esc(label)} <span class="dim">${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}</span></button>`).join('');
+      bar.onclick = e => { const x = e.target.closest('[data-t]'); if (x) f.src = src(+x.dataset.t); };
+      f.after(bar);
+    }
   });
 }
 

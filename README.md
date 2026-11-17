@@ -13,6 +13,8 @@ A self-hosted singing trainer modelled on vocalify.me, with one big addition: pa
   - **Part:** the melody, or a harmony line a third above, or a third, fifth or sixth below. Harmonies follow the song's key (detected automatically; you can correct it), so they stay in key.
   - **Sing it:** move your notes an octave or two. It picks the best fit for your range; the music stays put, so you sing in octaves with the singer.
   - **Music key:** shift the backing track and guide vocal up to 7 semitones either way to suit your voice. The first time takes a few seconds while the server makes a shifted copy (Rubber Band, so the tempo doesn't change); after that it's instant.
+  - **Speed:** slow the song to 90, 80, 75, 70, 60 or 50% without changing its pitch, to learn a fast passage. The notes, lyrics and scoring slow down with it. The first time takes up to half a minute per speed; after that it's instant.
+  - **Backing vocals** have their own volume slider, separate from the band. Songs added before this need re-analysing once (the song list offers it).
   - "Any octave counts" is still there if you'd rather be scored in whatever octave you sing.
 - **Grading.** Each note is scored on onset, transition and hold. Scoops into a note aren't penalised. Results show your score, notes landed, whether you sit sharp or flat, and your weakest notes.
 - **Latency.** A 10-second timing check at the start of each session measures your headphone and mic delay (sing "da" with a few beeps), saved per device. After each run it also checks whether your pitch line fits better shifted in time and offers a one-tap correction.
