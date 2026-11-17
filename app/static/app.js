@@ -613,19 +613,42 @@ function checkPatternHTML(count = true) {
 function needsTimingCheck() { try { return !sessionStorage.getItem(CHECK_KEY); } catch { return false; } }
 function markTimingChecked() { try { sessionStorage.setItem(CHECK_KEY, '1'); } catch { /* ignore */ } }
 
-function estimateDelay(frames, onsets) {
-  const inNote = t => onsets.some(o => t >= o && t < o + CHECK_NOTE);
-  const noteFrames = onsets.length * CHECK_NOTE / 0.01;
-  let best = { d: null, score: -Infinity, covered: 0 };
-  for (let d = -0.1; d <= 0.9; d += 0.005) {
-    let score = 0, hit = 0;
-    for (const f of frames) {
-      if (!f.v) continue;
-      if (inNote(f.t - d)) { score++; hit++; } else score -= 0.7;
+/* Works out the delay from when your voice starts, not its pitch: a beginner's "da" can be
+ * a few semitones (or an octave) away from the beep, and a pitch tracker needs time to lock
+ * onto a short syllable. frames: [{t, rms, voiced}] with t relative to the first beep.
+ * Returns { d (seconds) | null, matched (beeps with a "da" on them), heard, peak, floor }. */
+function estimateDelay(frames, onsets, maxDelay = 1.0) {
+  const pct = (a, q) => { const s = [...a].sort((x, y) => x - y); return s.length ? s[Math.min(s.length - 1, Math.floor(q * s.length))] : 0; };
+  const pre = frames.filter(f => f.t < -0.3).map(f => f.rms);         // the count-in: mostly room noise
+  const all = frames.map(f => f.rms);
+  const floor = Math.max(0.0015, pct(pre.length > 20 ? pre : all, 0.3));
+  const peak = pct(all, 0.98);
+  const thr = Math.max(floor * 2.5, floor + 0.2 * (peak - floor), 0.004);
+  // Voice active = loud enough, or the pitch tracker hears a voice at any pitch.
+  const act = frames.map(f => f.rms > thr || (f.voiced && f.rms > Math.max(floor * 2, 0.004)));
+  // Onsets: active after at least 70 ms of quiet; ignore anything within 180 ms of the last.
+  const starts = [];
+  let quiet = 99, last = -9;
+  frames.forEach((f, i) => {
+    if (act[i]) { if (quiet >= 7 && f.t - last > 0.18) { starts.push(f.t); last = f.t; } quiet = 0; } else quiet++;
+  });
+  const heard = starts.filter(t => t > -0.2).length;
+  let best = { d: null, score: -Infinity, matched: 0, inGaps: 0 };
+  const lastOn = onsets[onsets.length - 1];
+  for (let d = -0.1; d <= maxDelay + 1e-9; d += 0.005) {
+    let score = 0, matched = 0, inGaps = 0;
+    for (const o of onsets) {
+      const near = starts.reduce((m, t) => Math.min(m, Math.abs(t - (o + d))), 9);
+      if (near < 0.14) { score += 1 - near / 0.14; matched++; }
     }
-    if (score > best.score) best = { d, score, covered: hit / noteFrames };
+    // a "da" in a gap counts against this delay
+    for (const t of starts) if (t > -0.2 && onsets.every(o => Math.abs(t - (o + d)) > 0.25)) {
+      score -= 0.6;
+      if (t < lastOn + d + 0.3) inGaps++;
+    }
+    if (score > best.score) best = { d, score, matched, inGaps };
   }
-  return best;
+  return { ...best, heard, peak, floor, starts };
 }
 
 function timingCheck() {
@@ -650,7 +673,8 @@ function timingCheck() {
     async function run() {
       wrap.innerHTML = `<div class="card"><h2 style="margin-top:0">Listen…</h2><p class="tuner" id="tc-beat">·</p>
         ${checkPatternHTML()}
-        <p class="dim small" style="text-align:center">Sing "da" with each beep you hear</p></div>`;
+        <div class="meter" title="Microphone level"><div id="tc-level"></div></div>
+        <p class="dim small" style="text-align:center">Sing "da" with each beep you hear. The bar shows the mic hearing you.</p></div>`;
       let ctx;
       try { ctx = await startMic(); } catch (e) { intro(`<p class="err">${esc(e.message)}</p>`); return; }
       const s = SETTINGS || await settings();
@@ -662,8 +686,14 @@ function timingCheck() {
       const onsets = CHECK_PATTERN.map(b => b * CHECK_BEAT);
       onsets.forEach(o => playTone(ctx, out, m, start + o, CHECK_NOTE, 0.3));
       const frames = [];
-      off = onPitch(f => frames.push({ t: f.t - start, v: f.midi !== null && Math.abs(centsOff(f.midi, m, true)) < 250 }));
-      const end = start + onsets[onsets.length - 1] + 1.4;
+      const levelEl = wrap.querySelector('#tc-level');
+      let lvlPeak = 0.02;
+      off = onPitch(f => {
+        frames.push({ t: f.t - start, rms: f.rms || 0, voiced: f.midi !== null });
+        lvlPeak = Math.max(lvlPeak * 0.995, f.rms || 0);
+        levelEl.style.width = Math.min(100, 100 * (f.rms || 0) / lvlPeak) + '%';
+      });
+      const end = start + onsets[onsets.length - 1] + 1.6;
       const beatEl = wrap.querySelector('#tc-beat');
       await new Promise(done => {
         const tick = () => {
@@ -678,8 +708,13 @@ function timingCheck() {
       });
       off(); off = null; out.disconnect();
       const est = estimateDelay(frames, onsets);
-      if (est.d === null || est.covered < 0.35) {
-        intro(`<p class="err">Didn't hear enough singing to measure. Try again, singing a bit louder, right on each beep.</p>`);
+      try { localStorage.setItem('vl-timing-last', JSON.stringify({ at: Date.now(), d: est.d, matched: est.matched, inGaps: est.inGaps, heard: est.heard, peak: est.peak, floor: est.floor, frames: frames.length })); } catch { /* ignore */ }
+      if (est.d === null || est.matched < 5 || est.inGaps > 2) {
+        const why = !frames.length ? 'The microphone sent nothing at all. Check the browser has mic permission, then try again.'
+          : est.peak < est.floor * 2.5 || est.peak < 0.004 ? `The mic barely picked you up (level ${(est.peak * 1000).toFixed(1)}, background ${(est.floor * 1000).toFixed(1)}). With AirPods the AirPods' own mic is used: sing a little louder, and check Echo cancellation is off in Settings (it can mute short sounds).`
+          : est.inGaps > 2 ? `Heard sound in ${est.inGaps} of the gaps as well as on the beeps, so the timing could fit more than one way. Sing only on the beeps and keep the gaps silent (and if the room is noisy, try somewhere quieter).`
+          : `Heard ${est.heard} “da”${est.heard === 1 ? '' : 's'}, but only ${est.matched} of ${onsets.length} lined up with the beeps (needs 5). Sing one short “da” per beep and stay quiet in the gaps.`;
+        intro(`<p class="err">Couldn’t measure that one. ${esc(why)}</p>`);
         return;
       }
       const totalMs = Math.round(est.d * 1000);

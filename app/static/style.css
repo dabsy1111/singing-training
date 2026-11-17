@@ -131,3 +131,5 @@ a.lesson-row:hover { background: var(--panel2); }
 .video iframe { width: 100%; aspect-ratio: 16/9; border: 0; border-radius: 8px; }
 .stage .zoom { position: absolute; right: 8px; bottom: 8px; display: flex; gap: 4px; z-index: 2; }
 .stage .zoom button { width: 32px; height: 32px; padding: 0; border-radius: 8px; font-size: 18px; line-height: 1; opacity: .8; }
+.meter { height: 8px; background: rgba(255,255,255,.08); border-radius: 4px; overflow: hidden; margin: 8px 0; }
+.meter > div { height: 100%; width: 0; background: var(--green, #4c8); transition: width 60ms linear; }
