@@ -511,7 +511,7 @@ def me():
 
 
 def versioned(html: str) -> str:
-    for name in ("style.css", "app.js", "lessons.js", "course.js"):
+    for name in ("style.css", "mic-filter.js", "app.js", "lessons.js", "course.js"):
         html = html.replace(f"/static/{name}\"", f"/static/{name}?v={VERSION}\"")
     return html.replace("</head>", f'<script>window.VL_VERSION="{VERSION}";</script>\n</head>', 1)
 

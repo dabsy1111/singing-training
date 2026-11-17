@@ -48,6 +48,7 @@ DEFAULT_SETTINGS = {
     "echoCancellation": False,
     "recordTakes": True,
     "pxPerSecond": 140,
+    "micFilter": 2,          # 0 off, 1 light, 2 normal, 3 strong (see static/mic-filter.js)
 }
 
 

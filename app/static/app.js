@@ -109,16 +109,21 @@ async function startMic() {
   A.node = new AudioWorkletNode(ctx, 'pitch-processor');
   const sink = ctx.createGain(); sink.gain.value = 0;
   src.connect(A.node); A.node.connect(sink); sink.connect(ctx.destination);
-  A.gate = createJumpGate(); A.smooth = null;
+  A.gate = createJumpGate(); A.smooth = null; A.filter = null;
   A.node.port.onmessage = e => {
-    const f = e.data;
-    let hz = null;
-    if (f.hz > 0 && f.clarity > 0.8) {
-      const g = A.gate.push(f.hz, f.t);
-      if (g !== null) { A.smooth = smoothPitch(A.smooth, g); hz = A.smooth; } else hz = A.smooth;
-    } else { A.gate.reset(); A.smooth = null; }
-    const frame = { t: f.t, hz, midi: hz ? hzToMidi(hz) : null, rms: f.rms };
-    A.listeners.forEach(fn => fn(frame));
+    // the mic filter (mic-filter.js) drops breaths, clicks and bumps; rebuilt if its settings change
+    const st = SETTINGS || {};
+    const key = `${st.micFilter ?? 2}/${st.rangeLow}/${st.rangeHigh}`;
+    if (!A.filter || A.filterKey !== key) { A.filter = createMicFilter(st.micFilter ?? 2, st.rangeLow, st.rangeHigh); A.filterKey = key; }
+    for (const f of A.filter.push(e.data)) {
+      let hz = null;
+      if (f.hz > 0) {
+        const g = A.gate.push(f.hz, f.t);
+        if (g !== null) { A.smooth = smoothPitch(A.smooth, g); hz = A.smooth; } else hz = A.smooth;
+      } else { A.gate.reset(); A.smooth = null; }
+      const frame = { t: f.t, hz, midi: hz ? hzToMidi(hz) : null, rms: f.rms };
+      A.listeners.forEach(fn => fn(frame));
+    }
   };
   return ctx;
 }
@@ -1555,6 +1560,9 @@ route(/^\/settings$/, async () => {
       <label><input type="checkbox" name="octaveFree" ${s.octaveFree ? 'checked' : ''}> Any octave counts</label>
       <label><input type="checkbox" name="recordTakes" ${s.recordTakes ? 'checked' : ''}> Record my takes</label>
       <label><input type="checkbox" name="echoCancellation" ${s.echoCancellation ? 'checked' : ''}> Echo cancellation (only if you can't use headphones)</label>
+      <label>Mic filter: <b id="mfName">${MIC_FILTER_NAMES[s.micFilter ?? 2]}</b>
+        <input type="range" name="micFilter" min="0" max="3" step="1" value="${s.micFilter ?? 2}"></label>
+      <p class="small dim" id="mfHelp" style="grid-column:1/-1;margin:0"></p>
     </div>
     <div class="row"><button class="primary" id="save">Save</button>
       <button id="preset-b">Beginner tolerances</button><button id="preset-a">Advanced tolerances</button></div>
@@ -1566,6 +1574,15 @@ route(/^\/settings$/, async () => {
     </div>
     <div class="card small dim">App version ${esc(health.version || '?')}${health.built ? ` (built ${esc(new Date(health.built).toLocaleString())})` : ''} · page loaded as ${esc(window.VL_VERSION || '?')}${health.version && window.VL_VERSION && health.version !== window.VL_VERSION ? ' · <b>out of date: reload the page</b>' : ''}<br>Server: yt-dlp ${esc(health.yt_dlp || '?')} · separation ${esc(health.demucs_model || '?')} · pitch ${esc(health.crepe_model || '?')} · ${health.queue ?? '?'} queued</div>`;
   const form = $('#form');
+  const mfHelp = [
+    'Off: every clear pitch is drawn, including breaths and bumps.',
+    'Light: drops clicks, bumps and room noise. Draws about 60 ms behind your voice.',
+    'Normal: also drops breaths and short voiced exhales. Draws about 60 ms behind your voice.',
+    'Strong: only steady sounds clearly louder than your breathing. Very short staccato notes (under 0.1 s) may not show. Draws about 90 ms behind.',
+  ];
+  const mf = form.querySelector('[name=micFilter]');
+  const showMf = () => { $('#mfName').textContent = MIC_FILTER_NAMES[mf.value]; $('#mfHelp').textContent = mfHelp[mf.value]; };
+  mf.oninput = showMf; showMf();
   $('#preset-b').onclick = () => { form.querySelector('[name=greenCents]').value = 35; form.querySelector('[name=amberCents]').value = 70; };
   $('#preset-a').onclick = () => { form.querySelector('[name=greenCents]').value = 15; form.querySelector('[name=amberCents]').value = 35; };
   $('#latSave').onclick = () => { setDeviceLatencyMs(Number($('#lat').value)); toast('Saved for this device'); };
