@@ -264,6 +264,10 @@ class Practice {
     this.canvas = document.createElement('canvas');
     el.appendChild(this.canvas);
     this.hud = document.createElement('div'); this.hud.className = 'hud'; el.appendChild(this.hud);
+    this.zoomEl = document.createElement('div'); this.zoomEl.className = 'zoom';
+    this.zoomEl.innerHTML = '<button data-z="1" aria-label="Zoom in">+</button><button data-z="-1" aria-label="Zoom out">−</button>';
+    this.zoomEl.onclick = e => { const b = e.target.closest('[data-z]'); if (b) this.zoom(+b.dataset.z); };
+    el.appendChild(this.zoomEl);
     this.resize = this.resize.bind(this); window.addEventListener('resize', this.resize); this.resize();
     this.draw = this.draw.bind(this); this.raf = requestAnimationFrame(this.draw);
     this.bindDrag();
@@ -413,13 +417,14 @@ class Practice {
     g.clearRect(0, 0, W, H);
     const now = this.now(), px = W * 0.3;
     const t0 = now - px / pps, t1 = now + (W - px) / pps;
-    const [lo, hi] = this.viewRange();
+    const [lo, hi] = this.viewRange(now, t1);
     const rows = hi - lo + 1, rowH = H / rows;
+    const mLo = Math.floor(lo), mHi = Math.ceil(hi);
     const y = m => H - (m - lo + 0.5) * rowH;
     const x = t => px + (t - now) * pps;
     // grid
     g.font = '11px system-ui'; g.textBaseline = 'middle';
-    for (let m = lo; m <= hi; m++) {
+    for (let m = mLo; m <= mHi; m++) {
       const isC = ((m % 12) + 12) % 12 === 0;
       const black = [1, 3, 6, 8, 10].includes(((m % 12) + 12) % 12);
       g.fillStyle = black ? 'rgba(255,255,255,0.025)' : 'rgba(255,255,255,0.0)';
@@ -485,7 +490,7 @@ class Practice {
     g.fillStyle = 'rgba(255,255,255,0.5)'; g.fillRect(px, 0, 1, H);
     // left labels
     g.fillStyle = 'rgba(200,205,220,0.7)';
-    for (let m = lo; m <= hi; m++) if (rowH > 9 && (((m % 12) + 12) % 12 === 0 || rowH > 16) && ![1, 3, 6, 8, 10].includes(((m % 12) + 12) % 12)) g.fillText(noteName(m), 4, y(m));
+    for (let m = mLo; m <= mHi; m++) if (rowH > 9 && (((m % 12) + 12) % 12 === 0 || rowH > 16) && ![1, 3, 6, 8, 10].includes(((m % 12) + 12) % 12)) g.fillText(noteName(m), 4, y(m));
     // HUD
     const cur = this.playing ? this.current : null;
     if (cur && cur.midi !== null) {
@@ -495,7 +500,9 @@ class Practice {
     } else this.hud.innerHTML = `<div class="dim small">${fmtTime(Math.max(0, now))}</div>`;
   }
 
-  viewRange() {
+  // The whole melody's range, padded: the most the view ever shows.
+  fullRange() {
+    if (this._full && this._full.n === this.notes.length && this._full.shift === this.shift) return this._full.r;
     const s = this.opts.settings;
     let lo = s.rangeLow, hi = s.rangeHigh;
     if (this.notes.length) {
@@ -503,8 +510,44 @@ class Practice {
       lo = m[Math.floor(m.length * 0.02)]; hi = m[Math.ceil(m.length * 0.98) - 1];
     }
     lo -= 3; hi += 3;
-    while (hi - lo < 14) { lo--; hi++; }
+    while (hi - lo < 10) { lo--; hi++; }
+    this._full = { n: this.notes.length, shift: this.shift, r: [lo, hi] };
     return [lo, hi];
+  }
+
+  // How many semitone rows to show. Auto keeps rows about 26 px tall; +/− buttons override (kept per device).
+  rowsShown() {
+    const [flo, fhi] = this.fullRange(), full = fhi - flo + 1;
+    let want = +localStorage.getItem('vl.stageRows') || 0;
+    if (!want) want = clamp(Math.round(this.H / 26), 10, 18);
+    return Math.min(want, full);
+  }
+
+  zoom(dir) {
+    const [flo, fhi] = this.fullRange(), full = fhi - flo + 1;
+    const rows = clamp(this.rowsShown() - dir * 2, 7, full);
+    localStorage.setItem('vl.stageRows', rows >= full ? String(full + 50) : String(rows));   // "+50" = always fit
+  }
+
+  // Visible pitch window, following the notes coming up so they're always on screen and readable.
+  viewRange(now, tEnd) {
+    const [flo, fhi] = this.fullRange(), rows = this.rowsShown();
+    if (rows >= fhi - flo + 1) return [flo, fhi];
+    // Notes from just behind the playhead to the right edge; if they don't fit, the next 2.5 s.
+    const pick = (a, b) => this.notes.filter(n => n.t1 > a && n.t0 < b).map(n => n.midi + this.tune);
+    let m = pick(now - 0.5, tEnd);
+    if (m.length && Math.max(...m) - Math.min(...m) + 3 > rows) m = pick(now - 0.2, now + 2.5);
+    let centre = this.viewCentre ?? (flo + fhi) / 2;
+    if (m.length) centre = (Math.max(...m) + Math.min(...m)) / 2;
+    else if (this.current?.midi != null) centre = this.current.midi;   // gap in the melody: keep near your voice
+    centre = clamp(centre, flo + (rows - 1) / 2, fhi - (rows - 1) / 2);
+    // Glide rather than jump, so the notes don't twitch about.
+    const t = performance.now(), dt = Math.min(0.5, ((t - (this._vt || t)) / 1000));
+    this._vt = t;
+    if (this.viewCentre == null || Math.abs(centre - this.viewCentre) > rows) this.viewCentre = centre;
+    else this.viewCentre += (centre - this.viewCentre) * (1 - Math.exp(-dt / 0.35));
+    const lo = this.viewCentre - (rows - 1) / 2;
+    return [lo, lo + rows - 1];
   }
 }
 
