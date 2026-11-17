@@ -186,6 +186,40 @@ def process(song_id: str, job: dict):
 # fetch
 # --------------------------------------------------------------------------
 
+META_FIELDS = ("channel", "uploader", "artist", "track", "alt_title", "creator", "album")
+
+
+def save_meta(d: Path, info: dict):
+    """Who uploaded it and any artist/track tags, for finding lyrics later."""
+    meta = {k: info.get(k) for k in META_FIELDS if info.get(k)}
+    if isinstance(info.get("artists"), list) and info["artists"] and not meta.get("artist"):
+        meta["artist"] = info["artists"][0]
+    (d / "meta.json").write_text(json.dumps(meta, ensure_ascii=False))
+
+
+def ensure_meta(d: Path, url: str | None) -> dict:
+    """meta.json for songs added before it was saved: ask YouTube once (no download)."""
+    p = d / "meta.json"
+    if p.exists() or not url or not url.startswith("http"):
+        try:
+            return json.loads(p.read_text()) if p.exists() else {}
+        except ValueError:
+            return {}
+    try:
+        import yt_dlp
+        opts = {"quiet": True, "no_warnings": True, "skip_download": True, "noplaylist": True}
+        cookies = os.environ.get("YTDLP_COOKIES", str(DATA_DIR / "cookies.txt"))
+        if cookies and Path(cookies).exists():
+            opts["cookiefile"] = cookies
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False) or {}
+        save_meta(d, info)
+        return json.loads(p.read_text())
+    except Exception:  # noqa: BLE001 - only a hint for the lyrics search
+        log.warning("couldn't read video details for %s", url, exc_info=True)
+        return {}
+
+
 def fetch_youtube(url: str, d: Path, song_id: str | None = None):
     import yt_dlp
 
@@ -206,6 +240,7 @@ def fetch_youtube(url: str, d: Path, song_id: str | None = None):
             if info is None:
                 raise PipelineError("YouTube returned nothing for that link")
             title = info.get("title") or "Untitled"
+            save_meta(d, info)
             if song_id:
                 cur = db.get_song(song_id) or {}
                 if cur.get("title") in (None, "", "Fetching title…"):

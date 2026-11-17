@@ -948,6 +948,7 @@ function setupLyrics(id, P, song) {
   body.addEventListener('touchmove', () => { userScrollUntil = Date.now() + 4000; }, { passive: true });
   body.addEventListener('click', e => {
     const p = e.target.closest('p[data-i]');
+    if (p && syncing) { syncLine = +p.dataset.i; drawSync(); return; }
     if (!p || !L?.synced || P.playing) return;
     P.pos = Math.max(0, L.lines[+p.dataset.i].t0 + (L.offset || 0) - 1);   // jump a second before the line
     userScrollUntil = 0; cur = -2;
@@ -958,6 +959,46 @@ function setupLyrics(id, P, song) {
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => api(`/api/songs/${id}/lyrics`, { method: 'PUT', json: { offset: L.offset } }).catch(e => toast(e.message)), 600);
   };
+  // ---- sync by tapping: pick a line (the first sung one by default), play, tap "Now" as it starts.
+  // Every line moves by the same amount, so one good tap fixes the whole song.
+  let syncing = false, syncLine = 0;
+  const firstLine = () => Math.max(0, L.lines.findIndex(l => l.t0 !== null && l.text.trim()));
+  function drawSync() {
+    const bar = $('#lyrSyncBar');
+    bar.hidden = !syncing;
+    if (!syncing) return;
+    const l = L.lines[syncLine];
+    bar.innerHTML = `<div class="small dim">Press ▶ Sing, then tap <b>Now</b> the moment this line starts. Tap a different line below to sync on that one instead.</div>
+      <div class="row lyr-sync-row">
+        <button data-s="prev" aria-label="Earlier line">‹</button>
+        <span class="grow lyr-sync-line">“${esc(l?.text || '')}”</span>
+        <button data-s="next" aria-label="Later line">›</button>
+      </div>
+      <div class="row"><button class="primary" data-s="now">Now</button><span class="dim small grow" id="syncMsg"></span><button data-s="done">Done</button></div>`;
+  }
+  $('#lyrSyncBar').addEventListener('click', e => {
+    const b = e.target.closest('[data-s]'); if (!b || !L) return;
+    const a = b.dataset.s;
+    if (a === 'prev') { syncLine = Math.max(0, syncLine - 1); drawSync(); }
+    if (a === 'next') { syncLine = Math.min(L.lines.length - 1, syncLine + 1); drawSync(); }
+    if (a === 'done') { syncing = false; drawSync(); }
+    if (a === 'now') {
+      if (!P.playing) { $('#syncMsg').textContent = 'Press ▶ Sing first, then tap Now when the line starts.'; return; }
+      // What you hear lags the playhead by the headphone delay; people tap ~0.2 s after they hear it.
+      const heard = P.now() - ((P.latency || 0) + 0.2) * (P.rate || 1);
+      L.offset = Math.round((heard - L.lines[syncLine].t0) * 10) / 10;
+      render(); drawSync();
+      $('#syncMsg').textContent = `Lyrics moved to ${L.offset > 0 ? '+' : ''}${L.offset.toFixed(1)} s. Tap again to redo, or fine-tune with − and +.`;
+      api(`/api/songs/${id}/lyrics`, { method: 'PUT', json: { offset: L.offset } }).catch(e => toast(e.message));
+    }
+  });
+  $('#lyrSync').onclick = () => {
+    if (!L?.synced) return;
+    syncing = !syncing;
+    if (syncing) syncLine = firstLine();
+    drawSync();
+  };
+
   $('#lyrEarly').onclick = () => nudge(-0.2);
   $('#lyrLate').onclick = () => nudge(0.2);
   $('#lyrEdit').onclick = () => {
@@ -976,30 +1017,51 @@ function setupLyrics(id, P, song) {
       await api(`/api/songs/${id}/lyrics`, { method: 'DELETE' }); L = null; render(); m.remove();
     });
   };
+  const mmss = t => t ? `${Math.floor(t / 60)}:${String(Math.round(t % 60)).padStart(2, '0')}` : '?';
   function findDialog() {
     const a = L?.match?.artist || guess.artist || '', t = L?.match?.track || guess.track || '';
     const m = modal(`<h2 style="margin-top:0">Find lyrics</h2>
       <div style="display:grid;gap:8px">
         <label class="dim small">Artist <input type="text" id="fArtist" value="${esc(a)}" style="width:100%"></label>
         <label class="dim small">Song <input type="text" id="fTrack" value="${esc(t)}" style="width:100%"></label>
-        <label class="dim small">Where from <select id="fSrc" style="width:100%">
-          <option value="auto">Look up, then transcribe if not found</option>
-          <option value="lrclib">Look up only (LRCLIB)</option>
-          <option value="groq" ${groq ? '' : 'disabled'}>Transcribe the vocal (Groq Whisper)${groq ? '' : ': needs GROQ_API_KEY'}</option>
-        </select></label>
       </div>
-      <p class="small dim" id="fMsg">${L?.edited ? 'This replaces your edited lyrics.' : ''}</p>
-      <div class="row"><button class="primary" id="fGo">Find</button><button id="fCancel">Cancel</button></div>`);
+      <div class="row" style="margin-top:8px"><button class="primary" id="fGo">Search LRCLIB</button>
+        ${groq ? '<button id="fGroq">Transcribe the vocal instead</button>' : ''}<button id="fCancel">Cancel</button></div>
+      <p class="small dim" id="fMsg">${L?.edited ? 'Choosing new lyrics replaces your edited ones.' : ''}</p>
+      <div id="fList" class="lyr-results"></div>`);
+    const msg = m.querySelector('#fMsg'), list = m.querySelector('#fList');
     m.querySelector('#fCancel').onclick = () => m.remove();
-    m.querySelector('#fGo').onclick = async () => {
-      const btn = m.querySelector('#fGo'); btn.disabled = true;
-      m.querySelector('#fMsg').textContent = m.querySelector('#fSrc').value === 'lrclib' ? 'Searching…' : 'Searching (transcribing can take up to a minute)…';
+    async function search(useFields) {
+      const btn = m.querySelector('#fGo'); btn.disabled = true; msg.textContent = 'Searching LRCLIB…'; list.innerHTML = '';
+      const q = useFields ? `?artist=${encodeURIComponent(m.querySelector('#fArtist').value.trim())}&track=${encodeURIComponent(m.querySelector('#fTrack').value.trim())}` : '';
       try {
-        L = (await api(`/api/songs/${id}/lyrics`, { method: 'POST', json: {
-          source: m.querySelector('#fSrc').value, artist: m.querySelector('#fArtist').value.trim(), track: m.querySelector('#fTrack').value.trim() } })).lyrics;
+        const r = await api(`/api/songs/${id}/lyrics/search${q}`);
+        msg.textContent = r.results.length
+          ? `Your video is ${mmss(r.video_duration)}. Pick the version whose words match; a different length is fine (sync it with ⏱ afterwards).`
+          : 'Nothing on LRCLIB for that. Try fewer words, or check the spelling.';
+        list.innerHTML = r.results.map(x => `<button class="lyr-result" data-id="${x.id}">
+          <b>${esc(x.track || '')}</b> <span class="dim">· ${esc(x.artist || '')}</span>
+          <span class="small dim">${x.album ? esc(x.album) + ' · ' : ''}${mmss(x.duration)} · ${x.synced ? 'timed' : 'words only'}${x.id === L?.match?.id ? ' · current' : ''}</span>
+          ${x.first ? `<span class="small">“${esc(x.first)}”</span>` : ''}</button>`).join('');
+      } catch (e) { msg.textContent = e.message; }
+      btn.disabled = false;
+    }
+    list.onclick = async e => {
+      const b = e.target.closest('[data-id]'); if (!b) return;
+      list.querySelectorAll('button').forEach(x => x.disabled = true); msg.textContent = 'Loading those lyrics…';
+      try {
+        L = (await api(`/api/songs/${id}/lyrics/choose`, { method: 'POST', json: { id: +b.dataset.id } })).lyrics;
         render(); m.remove();
-      } catch (e) { m.querySelector('#fMsg').textContent = e.message; btn.disabled = false; }
+        if (L.synced) { syncing = true; syncLine = firstLine(); drawSync(); }   // straight into syncing
+      } catch (err) { msg.textContent = err.message; list.querySelectorAll('button').forEach(x => x.disabled = false); }
     };
+    m.querySelector('#fGo').onclick = () => search(true);
+    m.querySelector('#fGroq')?.addEventListener('click', async () => {
+      msg.textContent = 'Transcribing (can take up to a minute)…';
+      try { L = (await api(`/api/songs/${id}/lyrics`, { method: 'POST', json: { source: 'groq' } })).lyrics; render(); m.remove(); }
+      catch (err) { msg.textContent = err.message; }
+    });
+    search(false);   // start with the automatic guesses (title, channel, both name orders)
   }
   $('#lyrFind').onclick = findDialog;
   load(); tick();
@@ -1059,10 +1121,12 @@ route(/^\/song\/([0-9a-f]{12})(?:\?lesson=(\d\.\d))?$/, async (id, lessonId) => 
           <button id="lyrEarly" title="Show lyrics earlier" aria-label="Show lyrics earlier">−</button>
           <span class="dim small" id="lyrOff"></span>
           <button id="lyrLate" title="Show lyrics later" aria-label="Show lyrics later">+</button>
+          <button id="lyrSync" title="Sync: tap when a line starts" aria-label="Sync lyrics by tapping">⏱</button>
         </span>
         <button id="lyrEdit" title="Edit lyrics" aria-label="Edit lyrics">✎</button>
         <button id="lyrFind" title="Find lyrics again" aria-label="Find lyrics again">↻</button>
       </div>
+      <div class="lyr-sync" id="lyrSyncBar" hidden></div>
       <div class="lyr-body" id="lyrBody"></div>
     </div>
     <div class="controls">

@@ -349,9 +349,58 @@ def _ready_song(song_id):
 @app.get("/api/songs/{song_id}/lyrics")
 def get_lyrics(song_id: str):
     s = _ready_song(song_id)
-    data = lyrics.load(pipeline.song_dir(song_id))
-    artist, track = lyrics.split_title(s["title"])
+    d = pipeline.song_dir(song_id)
+    data = lyrics.load(d)
+    g = lyrics.guesses(s["title"], lyrics.load_meta(d))
+    artist, track = g[0] if g else ("", lyrics.clean_title(s["title"]))
     return {"lyrics": data, "guess": {"artist": artist, "track": track}, "groq": bool(lyrics.GROQ_KEY)}
+
+
+@app.get("/api/songs/{song_id}/lyrics/search")
+def search_lyrics(song_id: str, artist: str = "", track: str = ""):
+    """LRCLIB versions to choose from, best match first."""
+    s = _ready_song(song_id)
+    d = pipeline.song_dir(song_id)
+    meta = pipeline.ensure_meta(d, s.get("source"))
+    try:
+        if artist.strip() or track.strip():
+            recs = lyrics.lrclib_search(s["title"], s["duration"] or 0, meta, artist.strip(), track.strip())
+        else:
+            recs = lyrics.lrclib_search(s["title"], s["duration"] or 0, meta)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"LRCLIB search failed: {e}")
+    out, seen = [], set()
+    for r in recs:
+        # LRCLIB has many copies of popular songs; one per name, album, length and timing is plenty
+        k = (lyrics._norm(r.get("artistName") or ""), lyrics._norm(r.get("trackName") or ""),
+             lyrics._norm(r.get("albumName") or ""), round(r.get("duration") or 0), bool(r.get("syncedLyrics")))
+        if k in seen:
+            continue
+        seen.add(k)
+        first = lyrics.parse_lrc(r.get("syncedLyrics") or "")[:1] or lyrics.plain_lines(r.get("plainLyrics") or "")[:1]
+        out.append({"id": r.get("id"), "artist": r.get("artistName"), "track": r.get("trackName"),
+                    "album": r.get("albumName"), "duration": r.get("duration"), "synced": bool(r.get("syncedLyrics")),
+                    "score": r.get("score"), "first": first[0]["text"] if first else ""})
+    return {"results": out, "video_duration": s["duration"]}
+
+
+class LyricsChoose(BaseModel):
+    id: int
+
+
+@app.post("/api/songs/{song_id}/lyrics/choose")
+def choose_lyrics(song_id: str, body: LyricsChoose):
+    s = _ready_song(song_id)
+    d = pipeline.song_dir(song_id)
+    try:
+        rec = lyrics.lrclib_get(body.id)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"LRCLIB failed: {e}")
+    notes = json.loads((d / "analysis.json").read_text()).get("notes", [])
+    data = lyrics.from_record(rec or {}, notes, s["duration"] or 0)
+    if not data:
+        raise HTTPException(404, "That LRCLIB entry has no lyrics")
+    return {"lyrics": lyrics.save(d, data)}
 
 
 @app.post("/api/songs/{song_id}/lyrics")
@@ -359,6 +408,7 @@ def find_lyrics(song_id: str, body: LyricsFind):
     s = _ready_song(song_id)
     d = pipeline.song_dir(song_id)
     notes = json.loads((d / "analysis.json").read_text()).get("notes", [])
+    pipeline.ensure_meta(d, s.get("source"))
     try:
         return {"lyrics": lyrics.find(d, s["title"], s["duration"] or 0, notes,
                                       body.source if body.source in ("auto", "lrclib", "groq") else "auto",

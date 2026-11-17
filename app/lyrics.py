@@ -47,25 +47,73 @@ _TAIL = re.compile(r"\s*(\||//)\s.*$")
 _FEAT = re.compile(r"\s+(feat\.?|ft\.?|featuring)\s.*$", re.I)
 
 
-def split_title(title: str) -> tuple[str, str]:
-    t = _TAIL.sub("", title or "")
+_SEPS = (" - ", " – ", " — ", " | ", " ~ ", ": ", " // ", " -- ")
+_QUOTED = re.compile(r'^(.+?)\s+["“\'‘](.+?)["”\'’]\s*$')
+_PAREN = re.compile(r"\s*[\(\[\{][^)\]\}]*[\)\]\}]")
+_CHANNEL_JUNK = re.compile(r"\s*(-\s*topic|vevo|official|music|tv|channel|band)\s*$", re.I)
+
+
+def clean_title(title: str) -> str:
+    t = title or ""
     for _ in range(3):
         t = _JUNK.sub("", t)
-    t = re.sub(r"\s+(official\s+)?(music\s+)?(video|audio|lyrics?)\s*$", "", t, flags=re.I)
-    t = t.replace("“", '"').replace("”", '"').strip(" -–—\"'")
-    for sep in (" - ", " – ", " — ", " ~ ", ": "):
+    t = re.sub(r"\s+(official\s+)?(music\s+)?(video|audio|lyrics?|visuali[sz]er)\s*$", "", t, flags=re.I)
+    return t.replace("“", '"').replace("”", '"').strip(" -–—|\"'")
+
+
+def split_title(title: str) -> tuple[str, str]:
+    """Best single guess at (artist, track), for showing in the search form."""
+    g = guesses(title)
+    return (g[0] if g else ("", clean_title(title)))
+
+
+def guesses(title: str, meta: dict | None = None) -> list[tuple[str, str]]:
+    """Possible (artist, track) readings of a video, most likely first.
+
+    Titles come as "Artist - Song", "Song - Artist", "Artist | Song", 'Artist "Song"', or just
+    "Song" (then the channel name is often the artist). YouTube Music videos carry real
+    artist/track fields, which beat any guess.
+    """
+    meta = meta or {}
+    out = []
+    if meta.get("artist") and meta.get("track"):
+        out.append((str(meta["artist"]).split(",")[0].strip(), str(meta["track"]).strip()))
+    t = clean_title(title)
+    m = _QUOTED.match(t)
+    if m:
+        out.append((m.group(1).strip(" -–—|:"), m.group(2).strip()))
+    for sep in _SEPS:
         if sep in t:
-            artist, track = t.split(sep, 1)
-            return _FEAT.sub("", artist).strip(), _FEAT.sub("", track).strip(" \"'")
-    return "", t.strip()
+            left, right = (x.strip(" \"'") for x in t.split(sep, 1))
+            right = _TAIL.sub("", right)
+            left, right = _FEAT.sub("", left).strip(), _FEAT.sub("", right).strip(" \"'")
+            if left and right:
+                out += [(left, right), (right, left)]
+            break
+    ch = channel_artist(meta)
+    if ch and not out:
+        out.append((ch, _FEAT.sub("", t).strip()))
+    if not out:
+        out.append(("", _FEAT.sub("", t).strip()))
+    seen, uniq = set(), []
+    for a, tr in out:
+        if tr and (a.lower(), tr.lower()) not in seen:
+            seen.add((a.lower(), tr.lower()))
+            uniq.append((a, tr))
+    return uniq
+
+
+def channel_artist(meta: dict | None) -> str:
+    ch = (meta or {}).get("channel") or (meta or {}).get("uploader") or ""
+    return _CHANNEL_JUNK.sub("", ch).strip() if ch else ""
 
 
 # --------------------------------------------------------------------------
 # LRCLIB
 # --------------------------------------------------------------------------
 
-def _lrclib(path, params):
-    url = f"{LRCLIB}{path}?{urllib.parse.urlencode(params)}"
+def _lrclib(path, params=None):
+    url = f"{LRCLIB}{path}" + (f"?{urllib.parse.urlencode(params)}" if params else "")
     for attempt in range(3):
         r = requests.get(url, headers={"User-Agent": UA}, timeout=15)
         if r.status_code in (429, 503):
@@ -78,27 +126,106 @@ def _lrclib(path, params):
     return None
 
 
-def lrclib_lookup(artist: str, track: str, duration: float) -> dict | None:
-    """Best LRCLIB record for this song, preferring timed lyrics and a close length."""
-    rec = None
-    if artist and track and duration:
-        rec = _lrclib("/api/get", {"artist_name": artist, "track_name": track, "duration": int(round(duration))})
-    if rec and (rec.get("syncedLyrics") or rec.get("plainLyrics")):
-        return rec
-    params = {"track_name": track, "artist_name": artist} if artist else {"q": track}
-    results = _lrclib("/api/search", params) or []
-    if not results and artist:
-        results = _lrclib("/api/search", {"q": f"{artist} {track}"}) or []
-    best, best_score = None, None
-    for r in results:
-        if r.get("instrumental") or not (r.get("syncedLyrics") or r.get("plainLyrics")):
-            continue
-        dd = abs((r.get("duration") or 0) - duration) if duration else 0
-        # Videos often have an intro or outro, so allow some slack; timed lyrics win ties.
-        score = dd - (20 if r.get("syncedLyrics") else 0)
-        if dd <= max(25, 0.15 * duration) and (best_score is None or score < best_score):
-            best, best_score = r, score
-    return best
+def _norm(s: str) -> str:
+    import unicodedata
+    s = unicodedata.normalize("NFKD", s or "").encode("ascii", "ignore").decode().lower()
+    s = _PAREN.sub(" ", s).replace("&", " and ")
+    s = re.sub(r"\b(the|feat|ft|featuring)\b", " ", s)
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", s).split())
+
+
+def _sim(a: str, b: str) -> float:
+    from difflib import SequenceMatcher
+    a, b = _norm(a), _norm(b)
+    if not a or not b:
+        return 0.0
+    if a == b:
+        return 1.0
+    r = SequenceMatcher(None, a, b).ratio()
+    ta, tb = set(a.split()), set(b.split())
+    if ta <= tb or tb <= ta:   # one is the other plus extra words ("Numb" / "Numb Remastered")
+        r = max(r, 0.85 * len(ta & tb) / max(len(ta), len(tb)) + 0.15)
+    return r
+
+
+_VERSION = re.compile(r"\b(live|acoustic|remix|megamix|mix|instrumental|karaoke|tribute|sped|slowed|reverb|demo|cover|"
+                      r"nightcore|8d|piano|orchestral|unplugged|version|edit|remaster(?:ed)?)\b", re.I)
+
+
+def score_record(r: dict, hyps: list, title: str, duration: float, channel: str = "") -> float:
+    """0..1 text match (artist + track) with small adjustments for length, timing and versions."""
+    ra, rt = r.get("artistName") or "", r.get("trackName") or ""
+    best = 0.0
+    for a, t in hyps:
+        ts = _sim(rt, t)
+        if a:
+            s = 0.55 * ts + 0.45 * _sim(ra, a)
+        elif channel:
+            s = 0.55 * ts + 0.45 * max(_sim(ra, channel), 0.3)
+        else:
+            s = 0.55 * ts + 0.15
+        best = max(best, s)
+    # Titles in an odd order: fine if every word of the record's artist and track is in the title.
+    tt = set(_norm(clean_title(title)).split())
+    if tt and set(_norm(ra).split()) <= tt and set(_norm(rt).split()) <= tt and _norm(ra) and _norm(rt):
+        best = max(best, 0.95)
+    # A live/acoustic/karaoke/remix take when the video doesn't say so.
+    title_words = {w.lower() for w in _VERSION.findall(title or "")}
+    extra = {w.lower() for w in _VERSION.findall(f"{ra} {rt}")} - title_words - {"remaster", "remastered"}
+    best -= min(0.3, 0.15 * len(extra))
+    if duration and r.get("duration"):
+        dd = abs(r["duration"] - duration)
+        best -= 0 if dd <= 3 else min(0.12, dd / 600)   # videos often add intros; length only breaks ties
+    if r.get("syncedLyrics"):
+        best += 0.04
+    return round(best, 3)
+
+
+def lrclib_search(title: str, duration: float, meta: dict | None = None,
+                  artist: str | None = None, track: str | None = None, limit: int = 20) -> list[dict]:
+    """LRCLIB records for this song, best first, each with a "score" (0..1)."""
+    if artist is not None or track is not None:
+        hyps = [(artist or "", track or "")] if track else []
+        q_extra = [f"{artist or ''} {track or ''}".strip()]
+    else:
+        hyps = guesses(title, meta)
+        q_extra = [clean_title(title)]
+    channel = channel_artist(meta)
+    seen, records = set(), []
+
+    def add(rs):
+        for r in rs or []:
+            if r.get("id") not in seen and not r.get("instrumental") and (r.get("syncedLyrics") or r.get("plainLyrics")):
+                seen.add(r.get("id"))
+                records.append(r)
+
+    calls = 0
+    for a, t in hyps[:3]:
+        add(_lrclib("/api/search", {"track_name": t, "artist_name": a} if a else {"track_name": t})); calls += 1
+    for q in q_extra:
+        if q and calls < 5:
+            add(_lrclib("/api/search", {"q": q})); calls += 1
+    for r in records:
+        r["score"] = score_record(r, hyps or [("", q_extra[0])], title if track is None else f"{artist} - {track}",
+                                  duration, channel)
+    records.sort(key=lambda r: -r["score"])
+    return records[:limit]
+
+
+MATCH_MIN = 0.8   # below this the automatic lookup gives up rather than show the wrong song
+
+
+def lrclib_lookup(artist: str, track: str, duration: float, title: str | None = None, meta: dict | None = None) -> dict | None:
+    """Best LRCLIB record for this song, or None if nothing matches well enough."""
+    if title is not None and not (artist or track):
+        recs = lrclib_search(title, duration, meta)
+    else:
+        recs = lrclib_search(title or f"{artist} - {track}", duration, meta, artist, track)
+    return recs[0] if recs and recs[0]["score"] >= MATCH_MIN else None
+
+
+def lrclib_get(rec_id: int) -> dict | None:
+    return _lrclib(f"/api/get/{int(rec_id)}")
 
 
 _LRC_LINE = re.compile(r"^((?:\[\d+:\d+(?:[.:]\d+)?\])+)(.*)$")
@@ -268,31 +395,52 @@ def save(song_dir: Path, data: dict) -> dict:
     return data
 
 
+def from_record(rec: dict, notes: list, duration: float) -> dict | None:
+    """lyrics.json data from an LRCLIB record (timed if it has timing)."""
+    match = {"artist": rec.get("artistName"), "track": rec.get("trackName"), "id": rec.get("id"),
+             "duration": rec.get("duration")}
+    if rec.get("syncedLyrics"):
+        lines = parse_lrc(rec["syncedLyrics"])
+        if lines:
+            # a video with a long intro can sit well away from the album timing
+            dd = abs((rec.get("duration") or duration) - duration) if duration else 0
+            return {"source": "lrclib", "synced": True, "lines": lines, "match": match,
+                    "offset": best_offset(lines, notes, search=max(40.0, min(240.0, dd + 15)))}
+    if rec.get("plainLyrics"):
+        return {"source": "lrclib", "synced": False, "lines": plain_lines(rec["plainLyrics"]), "offset": 0.0,
+                "match": match}
+    return None
+
+
+def load_meta(song_dir: Path) -> dict:
+    p = song_dir / "meta.json"
+    try:
+        return json.loads(p.read_text()) if p.exists() else {}
+    except ValueError:
+        return {}
+
+
 def find(song_dir: Path, title: str, duration: float, notes: list,
          source: str = "auto", artist: str | None = None, track: str | None = None) -> dict:
     """Look up or transcribe lyrics and save them. Raises LyricsError if nothing worked."""
-    if artist is None or track is None:
-        a, t = split_title(title)
-        artist = a if artist is None else artist
-        track = t if track is None else track
+    meta = load_meta(song_dir)
     tried = []
     plain = None
-    if source in ("auto", "lrclib") and track:
+    if source in ("auto", "lrclib"):
         try:
-            rec = lrclib_lookup(artist, track, duration)
+            if not (artist or track):
+                rec = lrclib_lookup("", "", duration, title=title, meta=meta)
+            else:
+                rec = lrclib_lookup(artist or "", track or "", duration, meta=meta)
         except requests.RequestException as e:
             rec = None
             tried.append(f"LRCLIB unreachable ({e.__class__.__name__})")
-        if rec and rec.get("syncedLyrics"):
-            lines = parse_lrc(rec["syncedLyrics"])
-            if lines:
-                return save(song_dir, {
-                    "source": "lrclib", "synced": True, "lines": lines, "offset": best_offset(lines, notes),
-                    "match": {"artist": rec.get("artistName"), "track": rec.get("trackName"), "id": rec.get("id")},
-                })
-        if rec and rec.get("plainLyrics"):
-            plain = rec
-        tried.append(f'LRCLIB had no timed lyrics for "{artist + " - " if artist else ""}{track}"')
+        data = from_record(rec, notes, duration) if rec else None
+        if data and data["synced"]:
+            return save(song_dir, data)
+        plain = data
+        what = f"{artist + ' - ' if artist else ''}{track}" if track else clean_title(title)
+        tried.append(f'LRCLIB had no timed lyrics that matched "{what}" (try "Choose from LRCLIB")')
     if source in ("auto", "groq"):
         if GROQ_KEY:
             lines = groq_transcribe(song_dir / "vocals.mp3", notes, song_dir)
@@ -303,10 +451,7 @@ def find(song_dir: Path, title: str, duration: float, notes: list,
         else:
             tried.append("no GROQ_API_KEY set for transcription")
     if plain:
-        return save(song_dir, {
-            "source": "lrclib", "synced": False, "lines": plain_lines(plain["plainLyrics"]), "offset": 0.0,
-            "match": {"artist": plain.get("artistName"), "track": plain.get("trackName"), "id": plain.get("id")},
-        })
+        return save(song_dir, plain)
     raise LyricsError("; ".join(tried) or "nothing to search for")
 
 
