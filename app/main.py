@@ -109,13 +109,22 @@ def _note_summary(song_id):
     p = pipeline.song_dir(song_id) / "analysis.json"
     if not p.exists():
         return None
+    return _analysis_summary(song_id, p)[1]
+
+
+def _analysis_summary(song_id, p):
     mt = p.stat().st_mtime
     c = _fit_cache.get(song_id)
     if not c or c[0] != mt:
-        notes = json.loads(p.read_text()).get("notes", [])
-        c = (mt, [(n["midi"], n["t1"] - n["t0"]) for n in notes])
+        an = json.loads(p.read_text())
+        c = (mt, [(n["midi"], n["t1"] - n["t0"]) for n in an.get("notes", [])], an.get("v", 1))
         _fit_cache[song_id] = c
-    return c[1]
+    return c
+
+
+def _analysis_version(song_id):
+    p = pipeline.song_dir(song_id) / "analysis.json"
+    return _analysis_summary(song_id, p)[2] if p.exists() else None
 
 
 def best_octave(notes, lo, hi):
@@ -140,6 +149,9 @@ def songs():
             notes = _note_summary(r["id"])
             if notes:
                 r["best_shift"], r["fit"] = best_octave(notes, st["rangeLow"], st["rangeHigh"])
+            v = _analysis_version(r["id"])
+            r["outdated"] = bool(v and v < pipeline.ANALYSIS_VERSION
+                                 and (pipeline.song_dir(r["id"]) / "source.wav").exists())
     return rows
 
 
@@ -202,6 +214,35 @@ def retry_song(song_id: str):
     db.update_song(song_id, status="queued", stage="Waiting in queue", error=None)
     pipeline.enqueue(song_id, job)
     return db.get_song(song_id)
+
+
+def _reanalyse(song_id):
+    s = db.get_song(song_id)
+    if not s:
+        raise HTTPException(404, "No such song")
+    if s["status"] in ("queued", "processing"):
+        raise HTTPException(409, "It's already waiting or being processed")
+    if not (pipeline.song_dir(song_id) / "source.wav").exists():
+        raise HTTPException(400, "The original audio is gone; delete this song and add it again")
+    db.update_song(song_id, status="queued", stage="Waiting in queue", error=None)
+    pipeline.enqueue(song_id, {"reanalyse": True})
+    return db.get_song(song_id)
+
+
+@app.post("/api/songs/{song_id}/reanalyse")
+def reanalyse_song(song_id: str):
+    """Run the newest separation and melody finder again; keeps lyrics, a hand-set key and scores."""
+    return _reanalyse(song_id)
+
+
+@app.post("/api/songs/reanalyse-outdated")
+def reanalyse_outdated():
+    done = []
+    for r in songs():
+        if r.get("outdated") and r["status"] == "ready":
+            _reanalyse(r["id"])
+            done.append(r["id"])
+    return {"queued": done}
 
 
 @app.delete("/api/songs/{song_id}")

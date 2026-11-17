@@ -6,7 +6,7 @@ A self-hosted singing trainer modelled on vocalify.me, with one big addition: pa
 
 - **Lessons.** A 47-lesson course in 8 units for total beginners: posture and breath, matching pitch, clean starts and steady notes, moving between notes, crossing the break, tone and tension, learning songs, then harmony and agility. Each lesson has a short why, on-screen cues, a scored exercise pitched to your range, and one targeted tip when you miss (flat, sharp, late starts, wobble, drooping ends). The next lesson unlocks at 70%. A placement check can start experienced singers at Unit 4 or 7, a 3-minute daily warm-up opens each session, and the app suggests a rest day when your scores dip or you've sung a lot. Lesson text and pass marks live in `app/static/lessons.js`.
 
-- **Songs from YouTube or files.** yt-dlp downloads the audio, Demucs (`htdemucs`) splits vocals from accompaniment, CREPE tracks the vocal pitch and turns it into notes. The recording's tuning is measured, so songs that aren't at A440 still grade fairly.
+- **Songs from YouTube or files.** yt-dlp downloads the audio, Demucs (`htdemucs`) splits vocals from accompaniment, UVR-MDX-NET Karaoke 2 separates the lead singer from backing vocals (which go back into the music), and SwiftF0 tracks the lead vocal's pitch and turns it into notes. The recording's tuning is measured, so songs that aren't at A440 still grade fairly.
 - **Live pitch feedback.** Your voice is drawn over the target notes, 100 times a second, coloured green / amber / red by how many cents you're off. The HUD says "aim higher" or "aim lower".
 - **Practice controls.** Pick a section (or set it from the playhead), loop it, mix the accompaniment and guide vocal, and drag the track to move around.
 - **Sing it your way.** Each song has a part picker and key controls, remembered per song:
@@ -46,7 +46,7 @@ Then open:
 
 **Updating:** press **Update** on the stack in Dockge. It pulls the newest image and restarts. Your songs, takes, history and settings live in the stack's `data/` folder and aren't touched.
 
-Optional settings for the `.env` box (defaults shown): `VL_HTTPS_PORT=8443` and `VL_TUNNEL_PORT=18095` (change either if the port is taken), `MAX_SONG_MINUTES=12`, `CREPE_MODEL=tiny`, `DEMUCS_MODEL=htdemucs`, `PROCESS_THREADS=5`, `YTDLP_AUTO_UPDATE=1`.
+Optional settings for the `.env` box (defaults shown): `VL_HTTPS_PORT=8443` and `VL_TUNNEL_PORT=18095` (change either if the port is taken), `MAX_SONG_MINUTES=12`, `PITCH_MODEL=swiftf0`, `LEAD_SPLIT=1`, `CREPE_MODEL=tiny`, `DEMUCS_MODEL=htdemucs`, `PROCESS_THREADS=5`, `YTDLP_AUTO_UPDATE=1`.
 
 ### Without Dockge
 
@@ -105,7 +105,7 @@ Songs over 12 minutes are rejected (change with `MAX_SONG_MINUTES`).
 
 ### How long processing takes
 
-For a 4-minute song on the i5-9500T, expect about 1–2 minutes for separation and well under a minute for the pitch analysis with the default `CREPE_MODEL=tiny`. `full` is more accurate on breathy or heavily produced vocals but around 15× slower on CPU. One song is processed at a time; the rest queue.
+For a 4-minute song on the i5-9500T, expect about 1–2 minutes for separation, about as long again for the lead/backing split, and a few seconds for the pitch analysis. `LEAD_SPLIT=0` skips the lead/backing split (faster, but harmonies and gang vocals can pull the melody off). `PITCH_MODEL=crepe` brings back the old CREPE tracker. Songs analysed before the lead/backing split show a ↻ button and a "Re-analyse all" banner on the song list; re-analysing keeps lyrics, scores and a hand-set key. One song is processed at a time; the rest queue.
 
 ## Tips for good scores
 
@@ -126,7 +126,8 @@ Push to `main` and the **Build image** workflow publishes a new image within abo
 
 ```
 app/main.py           API: songs, runs, settings, stats, media
-app/pipeline.py       yt-dlp → Demucs → CREPE → notes, run one at a time in a background thread
+app/pipeline.py       yt-dlp → Demucs → lead/backing split → SwiftF0 → notes, one song at a time in a background thread
+app/mdx.py            runs MDX-Net ONNX models (the Karaoke 2 lead/backing split)
 app/db.py             SQLite
 app/auth.py           password sign-in (VL_PASSWORD), session cookie
 app/lyrics.py         LRCLIB lookup, Groq Whisper transcription, timing alignment
@@ -138,3 +139,5 @@ app/static/           Front end, plain JS with no build step
 ```
 
 Pitch smoothing and spike rejection in `app.js` are adapted from [kunukn/singing-experience](https://github.com/kunukn/singing-experience) (0BSD).
+
+Models: [Demucs](https://github.com/facebookresearch/demucs) (MIT, Meta) splits vocals from music; UVR-MDX-NET Karaoke 2, trained by the [Ultimate Vocal Remover](https://github.com/Anjok07/ultimatevocalremovergui) project (MIT), separates lead from backing vocals, run through code in `app/mdx.py` that follows [python-audio-separator](https://github.com/nomadkaraoke/python-audio-separator) (MIT); [SwiftF0](https://github.com/lars76/swift-f0) (MIT) tracks the pitch.

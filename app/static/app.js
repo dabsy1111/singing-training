@@ -675,6 +675,7 @@ route(/^\/$/, async () => {
         <span>Vocals get split from the music and the melody is worked out for you. A 4-minute song takes a few minutes.</span>
       </div>
     </div>
+    <div id="outdated"></div>
     <div id="list" class="songs"></div>`;
   const list = $('#list');
   let timer = null;
@@ -693,10 +694,23 @@ route(/^\/$/, async () => {
         <span class="pill ${song.status}">${song.status === 'processing' ? 'working' : song.status}</span>
         ${song.status === 'ready' ? `<a class="btn primary" href="#/song/${song.id}">Sing</a>` : ''}
         ${song.status === 'error' ? `<button data-retry>Retry</button>` : ''}
+        ${song.outdated && song.status === 'ready' ? `<button data-reanalyse title="Re-analyse with the newer melody finder" aria-label="Re-analyse">↻</button>` : ''}
         <button data-rename title="Rename" aria-label="Rename">✎</button>
         <button data-del class="danger" title="Delete">✕</button>
         </div>
       </div>`).join('') : `<p class="dim">No songs yet. Paste a YouTube link above.</p>`;
+    const old = songs.filter(x => x.outdated && x.status === 'ready');
+    $('#outdated').innerHTML = old.length ? `
+      <div class="card row">
+        <span class="grow small">${old.length === 1 ? '1 song was' : `${old.length} songs were`} worked out with the older melody finder. The new one separates the lead singer from backing vocals and gets the tune right more often. Lyrics, scores and a key you set yourself are kept.</span>
+        <button data-reall>Re-analyse ${old.length === 1 ? 'it' : 'all'}</button>
+      </div>` : '';
+    const btn = $('#outdated [data-reall]');
+    if (btn) btn.onclick = async () => {
+      btn.disabled = true;
+      try { await api('/api/songs/reanalyse-outdated', { method: 'POST' }); } catch (err) { toast(err.message); }
+      refresh();
+    };
     const busy = songs.some(x => x.status === 'queued' || x.status === 'processing');
     clearTimeout(timer); if (busy) timer = setTimeout(refresh, 3000);
   }
@@ -713,6 +727,9 @@ route(/^\/$/, async () => {
     } else if (e.target.closest('[data-del]')) {
       if (!confirm('Delete this song and its audio?')) return;
       try { await api(`/api/songs/${id}`, { method: 'DELETE' }); } catch (err) { toast(err.message); }
+      refresh();
+    } else if (e.target.closest('[data-reanalyse]')) {
+      try { await api(`/api/songs/${id}/reanalyse`, { method: 'POST' }); } catch (err) { toast(err.message); }
       refresh();
     } else if (e.target.closest('[data-retry]')) {
       try { await api(`/api/songs/${id}/retry`, { method: 'POST' }); } catch (err) { toast(err.message); }

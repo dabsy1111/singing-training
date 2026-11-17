@@ -3,8 +3,13 @@
 Steps for each song:
   1. fetch     - yt-dlp (or the uploaded file) -> source.wav
   2. separate  - Demucs htdemucs, two stems   -> vocals.wav + no_vocals.wav
-  3. analyse   - CREPE pitch tracking on the vocal stem -> contour + note list
-  4. encode    - mp3s the browser plays (accompaniment, vocal guide, original)
+  3. lead      - UVR-MDX-NET Karaoke 2 on the vocal stem -> lead.wav + backing.wav
+                 (harmonies, doubles and gang vocals go back into the music)
+  4. analyse   - SwiftF0 pitch tracking on the lead vocal -> contour + note list
+  5. encode    - mp3s the browser plays (accompaniment, vocal guide, original)
+
+Tested on 43 MUSDB18 clips against the studio vocal stems, and on a studio vs
+live recording of the same song (see the project design notes).
 """
 import json
 import logging
@@ -25,7 +30,11 @@ log = logging.getLogger("pipeline")
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
 SONGS_DIR = DATA_DIR / "songs"
 MAX_MINUTES = float(os.environ.get("MAX_SONG_MINUTES", "12"))
+PITCH_MODEL = os.environ.get("PITCH_MODEL", "swiftf0")   # swiftf0 | crepe (CREPE_MODEL picks tiny/full)
 CREPE_MODEL = os.environ.get("CREPE_MODEL", "tiny")       # tiny (fast) | full (~15x slower on CPU)
+LEAD_SPLIT = os.environ.get("LEAD_SPLIT", "1") == "1"     # split lead from backing vocals
+KARAOKE_MODEL = Path(os.environ.get("KARAOKE_MODEL", "/models/UVR_MDXNET_KARA_2.onnx"))
+ANALYSIS_VERSION = 2   # bump when re-analysing would give a better melody
 DEMUCS_MODEL = os.environ.get("DEMUCS_MODEL", "htdemucs")  # htdemucs | htdemucs_ft | mdx_extra
 THREADS = int(os.environ.get("PROCESS_THREADS", str(os.cpu_count() or 4)))
 PLAYBACK_RATE = 32000   # matches the AudioContext rate the browser uses
@@ -101,40 +110,65 @@ def process(song_id: str, job: dict):
                             f"(raise MAX_SONG_MINUTES in the stack's .env to allow longer).")
     db.update_song(song_id, duration=duration)
 
+    old = {}
+    if job.get("reanalyse") and (d / "analysis.json").exists():
+        old = json.loads((d / "analysis.json").read_text())
+
     vocals, accomp = d / "vocals.wav", d / "no_vocals.wav"
     if not (vocals.exists() and accomp.exists()):
         stage(song_id, f"Splitting vocals from music (Demucs, ~{max(1, round(duration / 60 * 0.6))} min on CPU)")
         separate(src, d)
 
+    guide, music = vocals, accomp
+    lead_split = False
+    if LEAD_SPLIT and KARAOKE_MODEL.exists():
+        stage(song_id, f"Separating the lead singer from backing vocals (~{max(1, round(duration / 60 * 0.5))} min)")
+        guide, music = split_lead(d, vocals, accomp)
+        lead_split = True
+    elif LEAD_SPLIT:
+        log.warning("lead/backing split skipped: %s not found", KARAOKE_MODEL)
+
     stage(song_id, "Finding the vocal melody")
-    analysis = analyse_vocals(vocals)
+    analysis = analyse_vocals(guide)
     analysis["duration"] = duration
+    analysis["v"] = ANALYSIS_VERSION
+    analysis["lead_split"] = lead_split
+    analysis["pitch_model"] = PITCH_MODEL
+    if old.get("key") and old["key"].get("detected") is False:
+        analysis["key"] = old["key"]    # keep a key the user set by hand
     (d / "analysis.json").write_text(json.dumps(analysis, separators=(",", ":")))
 
     stage(song_id, "Encoding audio for the browser")
-    encode_mp3(accomp, d / "accompaniment.mp3", channels=2)
-    encode_mp3(vocals, d / "vocals.mp3", channels=1)
-    encode_mp3(src, d / "original.mp3", channels=2)
+    for f in d.glob("*.t*.mp3"):        # key-shifted copies of the old audio
+        f.unlink(missing_ok=True)
+    encode_mp3(music, d / "accompaniment.mp3", channels=2)
+    encode_mp3(guide, d / "vocals.mp3", channels=1)
+    if not (d / "original.mp3").exists() or not job.get("reanalyse"):
+        encode_mp3(src, d / "original.mp3", channels=2)
 
     # Keep the stems' wavs only if asked; they're big.
     if os.environ.get("KEEP_WAV", "0") != "1":
-        for f in (vocals, accomp):
+        for f in (vocals, accomp, d / "lead.wav", d / "music.wav"):
             f.unlink(missing_ok=True)
 
-    stage(song_id, "Working out the key")
-    try:
-        analysis["key"] = detect_key(d / "accompaniment.mp3", analysis["notes"])
-        (d / "analysis.json").write_text(json.dumps(analysis, separators=(",", ":")))
-    except Exception:  # noqa: BLE001 - key is a nice-to-have; the song still works without it
-        log.exception("key detection failed for %s", song_id)
+    if "key" not in analysis:
+        stage(song_id, "Working out the key")
+        try:
+            analysis["key"] = detect_key(d / "accompaniment.mp3", analysis["notes"])
+            (d / "analysis.json").write_text(json.dumps(analysis, separators=(",", ":")))
+        except Exception:  # noqa: BLE001 - key is a nice-to-have; the song still works without it
+            log.exception("key detection failed for %s", song_id)
 
-    stage(song_id, "Finding the lyrics")
-    try:
-        from . import lyrics
-        title = (db.get_song(song_id) or {}).get("title") or ""
-        lyrics.find(d, title, duration, analysis["notes"])
-    except Exception as e:  # noqa: BLE001 - lyrics are optional; the song works without them
-        log.info("no lyrics for %s: %s", song_id, e)
+    from . import lyrics
+    if job.get("reanalyse") and lyrics.load(d):
+        pass    # keep the lyrics (and any edits) the song already has
+    else:
+        stage(song_id, "Finding the lyrics")
+        try:
+            title = (db.get_song(song_id) or {}).get("title") or ""
+            lyrics.find(d, title, duration, analysis["notes"])
+        except Exception as e:  # noqa: BLE001 - lyrics are optional; the song works without them
+            log.info("no lyrics for %s: %s", song_id, e)
 
     lo, hi = analysis.get("range") or (None, None)
     db.update_song(song_id, status="ready", stage=None, error=None, note_low=lo, note_high=hi)
@@ -244,45 +278,61 @@ def separate(src: Path, d: Path):
 
 
 # --------------------------------------------------------------------------
+# lead / backing vocals
+# --------------------------------------------------------------------------
+
+def split_lead(d: Path, vocals: Path, accomp: Path) -> tuple[Path, Path]:
+    """Lead vocal becomes the guide and the melody source; backing vocals join the music.
+
+    On a studio vs live test (Holding Absence, Kyoto Snow) this took studio/live
+    melody agreement from 77% to 80% and halved the stray pitch jumps, because
+    gang vocals and harmonies no longer pull the tracker off the tune.
+    """
+    import soundfile as sf
+    from .mdx import MDX
+
+    mix, sr = sf.read(str(vocals), dtype="float32", always_2d=True)
+    if sr != 44100:
+        raise PipelineError(f"Vocal stem is {sr} Hz; expected 44100")
+    lead, backing = MDX(str(KARAOKE_MODEL), threads=THREADS).split(mix.T)
+    music, _ = sf.read(str(accomp), dtype="float32", always_2d=True)
+    n = min(len(music), backing.shape[1])
+    music = music[:n] + backing.T[:n]
+    peak = float(np.abs(music).max())
+    if peak > 0.999:   # don't clip where the backing vocals land on loud music
+        music *= 0.999 / peak
+    lead_wav, music_wav = d / "lead.wav", d / "music.wav"
+    sf.write(str(lead_wav), lead.T, sr, subtype="FLOAT")
+    sf.write(str(music_wav), music, sr, subtype="FLOAT")
+    return lead_wav, music_wav
+
+
+# --------------------------------------------------------------------------
 # analyse
 # --------------------------------------------------------------------------
 
 def analyse_vocals(vocals: Path) -> dict:
     import librosa
-    import torch
-    import torchcrepe
 
     sr = 16000
     hop = int(sr * HOP_S)
     audio, _ = librosa.load(str(vocals), sr=sr, mono=True)
 
-    # Loudness gate: Demucs leaves faint bleed in the vocal stem.
+    # Loudness gate: separation leaves faint bleed in the vocal stem.
     rms = librosa.feature.rms(y=audio, frame_length=1024, hop_length=hop, center=True)[0]
     rms_db = 20 * np.log10(rms + 1e-9)
     gate = rms_db > (np.percentile(rms_db, 95) - 30)
 
-    # Only run the pitch model where there's something to hear; silence is most of a vocal stem.
-    n_frames = len(gate)
-    f0 = np.zeros(n_frames, dtype=np.float32)
-    per = np.zeros(n_frames, dtype=np.float32)
-    for a, b in _regions(gate, pad=10, join=30):
-        seg = audio[a * hop: b * hop]
-        if len(seg) < 1024:
-            continue
-        x = torch.from_numpy(np.ascontiguousarray(seg)).unsqueeze(0)
-        f, p = torchcrepe.predict(
-            x, sr, hop, fmin=65.0, fmax=1100.0, model=CREPE_MODEL,
-            decoder=torchcrepe.decode.viterbi, return_periodicity=True,
-            batch_size=512, device="cpu",
-        )
-        p = torchcrepe.filter.median(p, 3)
-        k = min(f.shape[1], b - a)
-        f0[a:a + k] = f[0, :k].numpy()
-        per[a:a + k] = p[0, :k].numpy()
+    if PITCH_MODEL == "swiftf0":
+        f0, per = _swiftf0(audio, sr, len(gate))
+        threshold = 0.5   # SwiftF0's confidence is calibrated so 0.5 means voiced
+    else:
+        f0, per = _crepe(audio, sr, hop, gate)
+        threshold = 0.45
 
     n = min(len(f0), len(gate))
     f0, per, gate = f0[:n], per[:n], gate[:n]
-    voiced = (per > 0.45) & gate
+    voiced = (per > threshold) & gate & (f0 > 0)
     midi = np.full(n, np.nan)
     midi[voiced] = 69 + 12 * np.log2(f0[voiced] / 440.0)
     midi = _median_nan(midi, 5)
@@ -304,6 +354,43 @@ def analyse_vocals(vocals: Path) -> dict:
         rng = None
     # notes are in the song's tuning: the true pitch of a note is midi + tuning/100
     return {"hop": HOP_S, "contour": contour, "notes": notes, "range": rng, "tuning": round(tuning * 100, 1)}
+
+
+def _swiftf0(audio, sr, n_frames):
+    """SwiftF0 (MIT, github.com/lars76/swift-f0): ~20x faster than CREPE tiny on CPU, and on a
+    studio vs live test it agreed with itself far more (77% vs 66%; octave errors 0.3% vs 4.2%)."""
+    from swift_f0 import SwiftF0
+
+    r = SwiftF0(threads=THREADS).detect(audio, sr, fmin=65.0, fmax=1100.0)
+    t = np.arange(n_frames) * HOP_S
+    f0 = np.interp(t, r.timestamps, r.pitch_hz).astype(np.float32)
+    conf = np.interp(t, r.timestamps, r.confidence).astype(np.float32)
+    return f0, conf
+
+
+def _crepe(audio, sr, hop, gate):
+    import torch
+    import torchcrepe
+
+    # Only run the pitch model where there's something to hear; silence is most of a vocal stem.
+    n_frames = len(gate)
+    f0 = np.zeros(n_frames, dtype=np.float32)
+    per = np.zeros(n_frames, dtype=np.float32)
+    for a, b in _regions(gate, pad=10, join=30):
+        seg = audio[a * hop: b * hop]
+        if len(seg) < 1024:
+            continue
+        x = torch.from_numpy(np.ascontiguousarray(seg)).unsqueeze(0)
+        f, p = torchcrepe.predict(
+            x, sr, hop, fmin=65.0, fmax=1100.0, model=CREPE_MODEL,
+            decoder=torchcrepe.decode.viterbi, return_periodicity=True,
+            batch_size=512, device="cpu",
+        )
+        p = torchcrepe.filter.median(p, 3)
+        k = min(f.shape[1], b - a)
+        f0[a:a + k] = f[0, :k].numpy()
+        per[a:a + k] = p[0, :k].numpy()
+    return f0, per
 
 
 def _regions(mask, pad, join):

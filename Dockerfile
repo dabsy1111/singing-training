@@ -21,6 +21,11 @@ RUN pip install -r requirements.txt
 # Bake the separation model into the image so the first song doesn't wait on a download.
 RUN python -c "from demucs.pretrained import get_model; get_model('htdemucs')"
 
+# Lead/backing vocal split: UVR-MDX-NET Karaoke 2 (MIT, trained by the Ultimate Vocal Remover
+# project, github.com/Anjok07/ultimatevocalremovergui). Checked against a known hash.
+RUN python -c "import urllib.request; urllib.request.urlretrieve('https://github.com/TRvlvr/model_repo/releases/download/all_public_uvr_models/UVR_MDXNET_KARA_2.onnx', '/models/UVR_MDXNET_KARA_2.onnx')" \
+ && echo "bf32e15105a09c0f7dddd2b67346146334d6f3ecb399ed7638eba2ab07cbf5f4  /models/UVR_MDXNET_KARA_2.onnx" | sha256sum -c -
+
 COPY app ./app
 ARG VL_VERSION=""
 ARG VL_BUILT=""

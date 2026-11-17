@@ -9,7 +9,9 @@ services:
     environment:
       VL_PASSWORD: ${VL_PASSWORD:-}               # sign-in password; required for Cloudflare tunnel access
       MAX_SONG_MINUTES: ${MAX_SONG_MINUTES:-12}
-      CREPE_MODEL: ${CREPE_MODEL:-tiny}          # tiny (fast) or full (~15x slower on CPU)
+      PITCH_MODEL: ${PITCH_MODEL:-swiftf0}       # swiftf0 (fast, best on real songs) or crepe
+      CREPE_MODEL: ${CREPE_MODEL:-tiny}          # only used when PITCH_MODEL=crepe: tiny or full
+      LEAD_SPLIT: ${LEAD_SPLIT:-1}               # 1 = separate the lead singer from backing vocals
       DEMUCS_MODEL: ${DEMUCS_MODEL:-htdemucs}    # htdemucs, htdemucs_ft or mdx_extra
       PROCESS_THREADS: ${PROCESS_THREADS:-5}
       YTDLP_AUTO_UPDATE: ${YTDLP_AUTO_UPDATE:-1}
