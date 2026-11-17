@@ -557,6 +557,16 @@ const CHECK_BEAT = 0.5;
 const CHECK_PATTERN = [0, 1, 2, 4, 5, 7, 8, 9, 11];   // beats with a note, after the count-in
 const CHECK_NOTE = 0.28;
 
+// The rhythm written out like lyrics, so you know where the gaps are before it starts.
+function checkPatternHTML(count = true) {
+  const last = CHECK_PATTERN[CHECK_PATTERN.length - 1];
+  const beats = Array.from({ length: last + 1 }, (_, b) => CHECK_PATTERN.includes(b) ? '<b>da</b>' : '<span class="dim">–</span>');
+  const bars = [];
+  for (let i = 0; i < beats.length; i += 4) bars.push(beats.slice(i, i + 4).join(' '));
+  if (count) bars.unshift('<span class="dim">1 2 3 4</span>');
+  return `<p class="tc-pattern">${bars.map(b => `<span class="bar">${b}</span>`).join('')}</p>`;
+}
+
 function needsTimingCheck() { try { return !sessionStorage.getItem(CHECK_KEY); } catch { return false; } }
 function markTimingChecked() { try { sessionStorage.setItem(CHECK_KEY, '1'); } catch { /* ignore */ } }
 
@@ -585,7 +595,9 @@ function timingCheck() {
     const intro = (note = '') => {
       wrap.innerHTML = `<div class="card">
         <h2 style="margin-top:0">Quick timing check</h2>
-        <p>Put your headphones on. You'll hear four clicks, then short beeps with a few gaps. Sing a short "da" in time with each beep, as if you were singing along.</p>
+        <p>Put your headphones on. You'll hear four clicks, then short beeps with a few gaps. Sing a short "da" in time with each beep, as if you were singing along. This is the pattern (– is a gap):</p>
+        ${checkPatternHTML()}
+        <p class="small dim">Go by what you hear in your headphones, not the screen: the screen runs ahead of Bluetooth audio.</p>
         <p class="small dim">This measures your headphone and mic delay so your notes line up. About 10 seconds. Current setting for this device: ${deviceLatencyMs()} ms extra.</p>
         ${note}
         <div class="row"><button class="primary" data-a="start">Start</button><button data-a="skip">Skip for now</button></div></div>`;
@@ -593,7 +605,9 @@ function timingCheck() {
       wrap.querySelector('[data-a=skip]').onclick = () => { markTimingChecked(); close(true); };
     };
     async function run() {
-      wrap.innerHTML = `<div class="card"><h2 style="margin-top:0">Listen…</h2><p class="tuner" id="tc-beat">·</p><p class="dim small" style="text-align:center">Sing "da" with each beep</p></div>`;
+      wrap.innerHTML = `<div class="card"><h2 style="margin-top:0">Listen…</h2><p class="tuner" id="tc-beat">·</p>
+        ${checkPatternHTML()}
+        <p class="dim small" style="text-align:center">Sing "da" with each beep you hear</p></div>`;
       let ctx;
       try { ctx = await startMic(); } catch (e) { intro(`<p class="err">${esc(e.message)}</p>`); return; }
       const s = SETTINGS || await settings();
@@ -614,7 +628,7 @@ function timingCheck() {
           if (t >= end) return done();
           if (t < t0) beatEl.textContent = '·';
           else if (t < start) beatEl.textContent = String(Math.floor((t - t0) / CHECK_BEAT) + 1);
-          else beatEl.textContent = onsets.some(o => t - start >= o && t - start < o + CHECK_NOTE) ? 'da' : '·';
+          else beatEl.textContent = '♪';   // no per-beat flashing: it would run ahead of Bluetooth audio
           requestAnimationFrame(tick);
         };
         tick();

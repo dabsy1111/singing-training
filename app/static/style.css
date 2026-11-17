@@ -112,3 +112,8 @@ a.lesson-row:hover { background: var(--panel2); }
 .card.pass { border-color: var(--green); }
 .card.nudge { border-color: var(--amber); }
 .lesson-banner { border-color: var(--accent); }
+.seg { display: flex; gap: 4px; flex-wrap: wrap; }
+.seg button { padding: 6px 10px; }
+.tc-pattern { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 0; font-size: 18px; line-height: 1.6; margin: 10px 0; }
+.tc-pattern .bar { white-space: nowrap; padding: 0 10px; border-left: 1px solid var(--line, #444); }
+.tc-pattern .bar:first-child { border-left: 0; }

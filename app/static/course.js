@@ -22,8 +22,73 @@ function saveCourse() {
 }
 function recordAttempt(id, score, passed) {
   if (score != null) C.best[id] = Math.max(C.best[id] ?? 0, Math.round(score));
-  if (passed && !C.passed[id]) C.passed[id] = { score: score == null ? null : Math.round(score), at: Date.now() };
+  if (passed && (!C.passed[id] || C.passed[id].skipped))
+    C.passed[id] = { score: score == null ? null : Math.round(score), at: Date.now(), ...(C.ease ? { ease: C.ease } : {}) };
   saveCourse();
+}
+function skipLesson(id) {
+  if (C.passed[id] && !C.passed[id].skipped) return;
+  C.passed[id] = { skipped: true, at: Date.now() };
+  saveCourse();
+}
+
+// ---------------------------------------------------------------- difficulty
+// Standard is the course as written. Easier/Easiest loosen every pass rule the same way,
+// so a lesson that's out of reach today (a 10 s even hiss, say) doesn't block the rest.
+const EASE = [
+  { name: 'Standard', score: 70, cents: 1, count: 1, secs: 1, onset: 1, even: 0.35, ear: 0, span: 1, ratio: 1, smooth: true,
+    blurb: 'The course as written.' },
+  { name: 'Easier', score: 60, cents: 1.5, count: 0.75, secs: 0.6, onset: 0.8, even: 0.5, ear: 2, span: 0.75, ratio: 0.6, smooth: true,
+    blurb: 'Pass at 60% instead of 70%, pitch windows 1.5× wider, holds and hisses 60% as long, fewer repeats needed.' },
+  { name: 'Easiest', score: 50, cents: 2, count: 0.5, secs: 0.4, onset: 0.6, even: 0.7, ear: 3, span: 0.5, ratio: 0.3, smooth: false,
+    blurb: 'Pass at 50%, pitch windows twice as wide, holds and hisses 40% as long, half the repeats, glides needn’t be smooth.' },
+];
+const ease = () => EASE[C?.ease || 0];
+function easedPass(pass) {
+  const e = ease(), q = { ...pass };
+  if (q.value != null) q.value = q.metric === 'onset' ? q.value * e.onset : Math.min(q.value, e.score);
+  if (q.score != null) q.score = Math.min(q.score, e.score);
+  if (q.cents != null) q.cents = Math.round(q.cents * e.cents);
+  if (q.count != null) q.count = Math.max(1, Math.ceil(q.count * e.count));
+  if (q.seconds != null) q.seconds = Math.max(1, Math.round(q.seconds * e.secs * 10) / 10);
+  if (q.onset != null) q.onset = q.onset * e.onset;
+  if (q.ratio != null) q.ratio = 1 + (q.ratio - 1) * e.ratio;
+  if (q.correct != null) q.correct = Math.max(5, q.correct - e.ear);
+  if (q.smooth && !e.smooth) q.smooth = false;
+  return q;
+}
+// Short description of an eased target, shown next to the lesson's own pass text.
+function passSummary(l) {
+  const q = l.pass, e = ease();
+  switch (q.metric) {
+    case 'breath': return `hiss ${q.seconds} s`;
+    case 'within': return `${q.count} notes within ${q.cents}¢`;
+    case 'drift': return `${q.score}%, drift under ${q.cents}¢`;
+    case 'tail': return `${q.score}%, endings within ${q.cents}¢`;
+    case 'onset': return `start score ${Math.round(q.value * 100)}%`;
+    case 'slide': return `${q.count} slides held ${q.seconds} s`;
+    case 'vowels': return `every vowel within ${q.cents}¢`;
+    case 'volume': return `${q.score}%, medium ${q.ratio.toFixed(1)}× louder`;
+    case 'straight': return `straight notes within ${q.cents}¢`;
+    case 'glides': return `${q.count} glide${q.count > 1 ? 's' : ''}, ${Math.round(e.span * 100)}% of the span${lessonById(l.id)?.pass?.smooth && !q.smooth ? ', gaps allowed' : ''}`;
+    case 'ear': return `${q.correct} of 10`;
+    case 'breaths': return `${q.score}%, starts ${Math.round(q.onset * 100)}%`;
+    case 'complete': return 'just finish it';
+    default: return `${q.score ?? q.value ?? e.score}%`;
+  }
+}
+
+// Lesson as it should be judged at the current difficulty (exercise content is unchanged).
+function easedLesson(lesson) {
+  const pass = easedPass(lesson.pass || (['setup', 'range', 'pickSong', 'sequence'].includes(lesson.type) ? { metric: 'complete' } : { metric: 'score', value: 70 }));
+  const params = { ...(lesson.params || {}) };
+  if (lesson.type === 'breath') params.seconds = pass.seconds;
+  if (lesson.type === 'glide') {
+    params.count = pass.count ?? params.count;
+    params.spanScale = ease().span;
+    params.smooth = !!pass.smooth;   // the lesson's "no gap in the line" rule
+  }
+  return { ...lesson, pass, params };
 }
 function isUnlocked(l) {
   const i = ALL_LESSONS.findIndex(x => x.id === l.id);
@@ -164,7 +229,7 @@ function evaluate(lesson, P, res, s, extra = {}) {
   const notes = P ? P.notes.filter(n => n.frames.length) : [];
   const st = notes.map(n => ({ n, ...noteStats(n, s) }));
   const score = res?.score ?? null;
-  const ok70 = v => (score ?? 0) >= (v ?? 70);
+  const ok70 = v => (score ?? 0) >= (v ?? ease().score);
   let passed = false, detail = '';
   switch (pass.metric) {
     case 'score': passed = ok70(pass.value); break;
@@ -270,15 +335,21 @@ route(/^\/lessons$/, async () => {
   const [s] = await Promise.all([settings(), course()]);
   const nxt = nextLesson();
   const done = ALL_LESSONS.filter(l => C.passed[l.id]).length;
+  const skipped = ALL_LESSONS.filter(l => C.passed[l.id]?.skipped);
   const warmupReady = C.passed['1.5'] || C.placedUnit >= 4;
   const warmedUp = C.warmups[today()];
   view.innerHTML = `<h1>Lessons</h1>
     <div class="card row">
-      <div class="grow"><b>${done} of ${ALL_LESSONS.length} lessons passed</b>
+      <div class="grow"><b>${done - skipped.length} of ${ALL_LESSONS.length} lessons passed</b>${skipped.length ? ` <span class="dim small">· ${skipped.length} skipped</span>` : ''}
         <div class="meter" style="margin:8px 0 0"><i style="left:0;width:${Math.max(2, 100 * done / ALL_LESSONS.length)}%;height:10px;top:0;border-radius:99px;background:var(--accent)"></i></div></div>
       ${nxt ? `<a class="btn primary" href="#/lesson/${nxt.id}">${done ? 'Continue' : 'Start'}: ${esc(nxt.id)} ${esc(nxt.title)}</a>` : '<span class="pill ready">Course complete</span>'}
     </div>
     <div id="nudges"></div>
+    <div class="card">
+      <div class="row"><b class="grow">Difficulty</b>
+        <div class="seg" id="ease">${EASE.map((e, k) => `<button data-ease="${k}" class="${(C.ease || 0) === k ? 'primary' : ''}">${e.name}</button>`).join('')}</div></div>
+      <p class="dim small" style="margin:6px 0 0">${esc(ease().blurb)} Lessons already passed stay passed. Stuck on one? Open it and choose “Skip this lesson for now”; skipped lessons stay open to come back to.</p>
+    </div>
     ${warmupReady ? `<div class="card row"><div class="grow"><b>Today’s warm-up</b> <span class="dim small">about 3 minutes</span></div>
       ${warmedUp ? '<span class="pill ready">done today ✓</span> ' : ''}<a class="btn ${warmedUp ? '' : 'primary'}" href="#/lesson/1.5?daily">Warm up</a>
       ${C.passed['6.6'] ? '<a class="btn" href="#/lesson/6.6?daily">Warm down</a>' : ''}</div>` : ''}
@@ -288,12 +359,16 @@ route(/^\/lessons$/, async () => {
       <p class="dim small" style="margin-top:-4px">${esc(u.intro)}</p>
       <div class="card lessons">${u.lessons.map(l => {
         const lu = { ...l, unit: u.id }, open = isUnlocked(lu), p = C.passed[l.id];
-        const icon = p ? '✓' : open ? '▶' : '🔒';
+        const icon = p?.skipped ? '↷' : p ? '✓' : open ? '▶' : '🔒';
         return `<${open ? `a href="#/lesson/${l.id}"` : 'div'} class="lesson-row ${p ? 'passed' : open ? 'open' : 'locked'}">
           <span class="lesson-icon">${icon}</span><span class="grow"><b>${l.id}</b> ${esc(l.title)}</span>
-          <span class="dim small">${p ? (C.best[l.id] != null ? C.best[l.id] + '%' : 'done') : C.best[l.id] != null ? 'best ' + C.best[l.id] + '%' : ''}</span></${open ? 'a' : 'div'}>`;
+          <span class="dim small">${p?.skipped ? 'skipped' : p ? (C.best[l.id] != null ? C.best[l.id] + '%' : 'done') + (p.ease ? ` · ${EASE[p.ease].name.toLowerCase()}` : '') : C.best[l.id] != null ? 'best ' + C.best[l.id] + '%' : ''}</span></${open ? 'a' : 'div'}>`;
       }).join('')}</div>`).join('')}`;
   restNudges($('#nudges'));
+  $('#ease').onclick = e => {
+    const b = e.target.closest('[data-ease]'); if (!b) return;
+    C.ease = +b.dataset.ease; saveCourse(); render();
+  };
 }, 'lessons');
 
 async function restNudges(box) {
@@ -333,22 +408,27 @@ route(/^\/lesson\/(\d\.\d)(?:\?(\w+))?$/, async (id, flag) => {
   }
   const daily = flag === 'daily';
   const i = ALL_LESSONS.indexOf(lesson), next = ALL_LESSONS[i + 1];
+  const judged = daily ? lesson : easedLesson(lesson);
+  const passRec = C.passed[id];
   view.innerHTML = `
     <p class="dim small"><a href="#/lessons">Lessons</a> › Unit ${lesson.unit} · ${esc(lesson.unitTitle)}</p>
     <h1>${daily ? (id === '1.5' ? 'Today’s warm-up' : 'Warm-down') : `${lesson.id} ${esc(lesson.title)}`}
-      ${C.passed[id] && !daily ? `<span class="pill ready">passed${C.best[id] != null ? ' · best ' + C.best[id] + '%' : ''}</span>` : ''}</h1>
+      ${passRec && !daily ? (passRec.skipped ? '<span class="pill">skipped</span>' : `<span class="pill ready">passed${C.best[id] != null ? ' · best ' + C.best[id] + '%' : ''}</span>`) : ''}</h1>
     <p>${esc(lesson.why)}</p>
     <div class="cues">${lesson.cues.map(c => `<span class="cue">${esc(c)}</span>`).join('')}</div>
-    ${!daily && lesson.passText ? `<p class="dim small">To pass: ${esc(lesson.passText)}</p>` : !daily ? '<p class="dim small">To pass: 70%</p>' : ''}
+    ${!daily ? `<p class="dim small">To pass: ${esc(lesson.passText || '70%')}${C.ease ? ` <span class="pill">${ease().name}: ${esc(passSummary(judged))}</span>` : ''}</p>` : ''}
     <div id="ex"></div>
-    <div id="out"></div>`;
+    <div id="out"></div>
+    ${!daily && !passRec ? `<p class="small dim" style="margin-top:16px">Can’t do this one yet? <button data-skiptop>Skip this lesson for now</button> <a href="#/lessons">Difficulty: ${ease().name}</a></p>` : ''}`;
   const ex = $('#ex'), out = $('#out');
+  const skipTop = view.querySelector('[data-skiptop]');
+  if (skipTop) skipTop.onclick = () => { if (confirm('Skip this lesson for now? The next one unlocks and you can come back to this one any time.')) { skipLesson(id); location.hash = next && isUnlocked(next) ? `#/lesson/${next.id}` : '#/lessons'; } };
   const offs = [];
   cleanup = () => { offs.forEach(f => f()); stopMic(); };
 
   // What happens when an attempt finishes.
   async function report({ res, P, extra = {} }) {
-    const ev = evaluate(lesson, P, res, s, extra);
+    const ev = evaluate(judged, P, res, s, extra);
     const score = res?.score ?? extra.score ?? null;
     if (!daily) recordAttempt(id, score, ev.passed);
     else if (ev.passed || lesson.pass?.metric === 'complete') { C.warmups[today()] = true; saveCourse(); }
@@ -364,13 +444,18 @@ route(/^\/lesson\/(\d\.\d)(?:\?(\w+))?$/, async (id, flag) => {
       ${res?.take ? `<p><audio controls src="${URL.createObjectURL(res.take)}"></audio></p>` : ''}
       <div class="row"><button id="again">Try again</button>
         ${daily ? '<a class="btn primary" href="#/lessons">Back to lessons</a>' : ev.passed && nextOpen ? `<a class="btn primary" href="#/lesson/${next.id}">Next: ${next.id} ${esc(next.title)}</a>` : ''}
-        ${!ev.passed && !daily ? '<a class="btn" href="#/lessons">Back to lessons</a>' : ''}</div></div>`;
+        ${!ev.passed && !daily ? '<a class="btn" href="#/lessons">Back to lessons</a>' : ''}</div>
+      ${!ev.passed && !daily && !C.passed[id] ? `<p class="small dim" style="margin-top:10px">Stuck? ${C.ease < 2 ? `<button data-easier>Make lessons easier</button> or ` : ''}<button data-skip>Skip this lesson for now</button></p>` : ''}</div>`;
     bindLatencyButton(out);
     $('#again').onclick = () => { out.innerHTML = ''; start(); };
+    const eb = out.querySelector('[data-easier]');
+    if (eb) eb.onclick = () => { C.ease = (C.ease || 0) + 1; saveCourse(); toast(`Lessons set to ${ease().name}. Try again with the new target.`); render(); };
+    const sb = out.querySelector('[data-skip]');
+    if (sb) sb.onclick = () => skipLesson(id) || (location.hash = next && isUnlocked(next) ? `#/lesson/${next.id}` : '#/lessons');
     if (ev.passed && lesson.id === '1.5' && !daily) { C.warmups[today()] = true; saveCourse(); }
   }
 
-  const start = () => runLesson(lesson, s, ex, report, offs, daily).catch(e => toast(e.message, 6000));
+  const start = () => runLesson(judged, s, ex, report, offs, daily).catch(e => toast(e.message, 6000));
   start();
 }, 'lessons');
 
@@ -439,7 +524,7 @@ async function baselineBias() {
 // ---- glide tracker: sirens and slides, no target notes
 function analyseGlides(trail, p, s) {
   const { lo, hi } = rangeOf(s);
-  const need = p.span === 'range' ? Math.max(5, Math.min(12, hi - lo - 3)) : p.span;
+  const need = Math.max(3, Math.round((p.span === 'range' ? Math.max(5, Math.min(12, hi - lo - 3)) : p.span) * (p.spanScale ?? 1)));
   const segs = []; let cur = null, gap = 0;
   for (const f of trail) {
     if (f.midi !== null) {
@@ -507,9 +592,9 @@ function breathLesson(lesson, s, ex, report, offs) {
         const mean = sm.reduce((a, x) => a + x, 0) / sm.length;
         const cv = Math.sqrt(sm.reduce((a, x) => a + (x - mean) ** 2, 0) / sm.length) / mean;
         best = Math.max(best, len);
-        if (cv <= 0.35) bestEven = Math.max(bestEven, len);
+        if (cv <= ease().even) bestEven = Math.max(bestEven, len);
         $('#bsec').textContent = `${len.toFixed(1)} s`;
-        $('#bmsg').textContent = cv <= 0.35 ? 'Nice and even…' : 'Try to keep it more even';
+        $('#bmsg').textContent = len >= need && cv <= ease().even ? `That’s ${need} s, nice and even ✓` : cv <= ease().even ? 'Nice and even…' : 'Try to keep it more even';
       } else if (runStart !== null && ++quietFor > 15) { runStart = null; }
       last = now;
       if ((now - t0) / 1000 > need + 15 || (bestEven >= need && runStart === null)) {
@@ -630,7 +715,7 @@ function setupSongLesson(lessonId, ui) {
   const partsLeft = () => (p.parts || []).filter(k => !C.partsPassed[lessonId]?.[k]);
   banner.innerHTML = `<div class="row"><b class="grow">Lesson ${lesson.id}: ${esc(lesson.title)}</b><a class="small" href="#/lesson/${lesson.id}">lesson page</a></div>
     <div class="cues">${lesson.cues.map(c => `<span class="cue">${esc(c)}</span>`).join('')}</div>
-    <p class="dim small" id="lbmsg">${p.minFraction ? `Sing at least ${Math.round(p.minFraction * 100)}% of the song.` : `Pick a ${p.minSec}–${p.maxSec} s section, then sing it. Pass: ${esc(lesson.passText || '70%')}.`}</p>`;
+    <p class="dim small" id="lbmsg">${p.minFraction ? `Sing at least ${Math.round(p.minFraction * 100)}% of the song.` : `Pick a ${p.minSec}–${p.maxSec} s section, then sing it. Pass: ${esc(lesson.passText || '70%')}${C.ease ? ` (${ease().name}: ${ease().score}%)` : ''}.`}</p>`;
   ui.view.prepend(banner);
   if (p.guide != null) ui.setGuide(p.guide);
   if (p.lyrics != null) ui.setLyrics(p.lyrics);
@@ -653,13 +738,14 @@ function setupSongLesson(lessonId, ui) {
         return;
       }
       if (!res.finished) { msg.textContent = 'Sing the section to the end for it to count.'; return; }
-      let passed = (res.score ?? 0) >= 70, detail = '';
+      const jp = easedLesson(lesson).pass;
+      let passed = (res.score ?? 0) >= ease().score, detail = '';
       if (p.breathMarks) {
         const marks = ui.P.opts.breathMarks.filter(b => b > from && b < to);
         const after = res.notes.filter(n => marks.some(b => n.t0 > b && n.t0 - b < 1.2));
         const graded = ui.P.notes.filter(n => after.some(a => a.t0 === n.t0) && n.result);
         const onset = graded.length ? graded.reduce((a, n) => a + n.result.onset, 0) / graded.length : 1;
-        passed = passed && onset >= lesson.pass.onset;
+        passed = passed && onset >= jp.onset;
         detail = ` Starts after breaths: ${Math.round(onset * 100)}%.`;
       }
       if (p.parts) {
@@ -691,7 +777,7 @@ function setupSongLesson(lessonId, ui) {
         saveCourse();
       }
       msg.innerHTML = passed ? `<b>Lesson ${lessonId} passed ✓</b> (${Math.round(res.score)}%).${detail} <a href="#/lessons">Back to lessons</a>`
-        : `${Math.round(res.score ?? 0)}%, not yet 70%.${detail} Loop the section and try again.`;
+        : `${Math.round(res.score ?? 0)}%, not yet ${ease().score}%.${detail} Loop the section and try again.`;
     },
   };
 }
