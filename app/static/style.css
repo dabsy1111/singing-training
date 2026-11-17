@@ -117,3 +117,15 @@ a.lesson-row:hover { background: var(--panel2); }
 .tc-pattern { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 0; font-size: 18px; line-height: 1.6; margin: 10px 0; }
 .tc-pattern .bar { white-space: nowrap; padding: 0 10px; border-left: 1px solid var(--line, #444); }
 .tc-pattern .bar:first-child { border-left: 0; }
+.videos summary { cursor: pointer; list-style: none; }
+.videos summary::-webkit-details-marker { display: none; }
+.videos summary::before { content: '▸ '; color: var(--dim); }
+.videos[open] summary::before { content: '▾ '; }
+.video { display: flex; gap: 12px; align-items: flex-start; margin-top: 12px; }
+.video .vthumb { position: relative; flex: 0 0 140px; padding: 0; border: 0; border-radius: 8px; overflow: hidden; background: #000; aspect-ratio: 16/9; }
+.video .vthumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.video .vplay { position: absolute; inset: 0; display: grid; place-items: center; font-size: 26px; color: #fff; text-shadow: 0 1px 6px #000; }
+.video .vlen { position: absolute; right: 4px; bottom: 4px; font-size: 11px; background: rgba(0,0,0,.75); color: #fff; padding: 1px 4px; border-radius: 4px; }
+.video .vtext { flex: 1; min-width: 0; }
+.video.playing { flex-direction: column; }
+.video iframe { width: 100%; aspect-ratio: 16/9; border: 0; border-radius: 8px; }

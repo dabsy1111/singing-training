@@ -260,3 +260,55 @@ const COURSE = [
     ],
   },
 ];
+
+/* Demonstration videos from vocal coaches, shown on the lesson page and loaded only when tapped.
+ * Each one was checked to exist and allow embedding (YouTube oEmbed) on 17 Nov 2026.
+ * id = YouTube video id; note = what to watch for. */
+const LESSON_VIDEOS = {
+  '1.3': [
+    { id: 'K67vIp7_93I', title: 'Hissing breath exercise', by: 'Berklee Online', len: '3:10',
+      note: 'What an even hiss sounds like, and where the breath goes.' },
+    { id: '2H1FATAriEc', title: 'Hissing exercise, 12 seconds', by: 'Dots Singing', len: '1:27',
+      note: 'Hiss along with it. Even, not loud: a small steady leak, not a burst that fades.' },
+  ],
+  '1.4': [
+    { id: 'fwNPp-RS4IY', title: 'How to do the lip trill', by: 'Singgeek', len: '2:46',
+      note: 'Loose lips, steady air. Fingers at the corners of the mouth help.' },
+    { id: 'M_aG0Y87Vcw', title: 'Can’t do the lip trill? Try this…', by: 'Ramsey Voice Studio', len: '0:59',
+      note: 'If the trill keeps stalling.' },
+    { id: '0xYDvwvmBIM', title: 'Vocal straw exercise', by: 'Ingo Titze, National Center for Voice and Speech', len: '4:37',
+      note: 'The straw alternative, from the voice scientist who popularised it.' },
+  ],
+  '2.2': [
+    { id: '00vt7RAvG70', title: 'How to match pitch', by: 'Berklee Online', len: '3:33',
+      note: 'Listen first, hear it in your head, then sing.' },
+  ],
+  '3.1': [
+    { id: 'pttjdYJEOVA', title: 'Glottal vs aspirate vs balanced onset', by: 'Vocal Warmups with Kathleen', len: '12:13',
+      note: 'All three ways to start a note, side by side.' },
+    { id: '_OVbFYnNVZc', title: 'Clean vs breathy', by: 'Berklee Online', len: '2:37',
+      note: 'Short version: the difference you’re listening for.' },
+  ],
+  '3.4': [
+    { id: 'nL6DDKt1sWM', title: '5 ways to end a note', by: '30 Day Singer', len: '6:50',
+      note: 'Endings that don’t drop in pitch or squeeze.' },
+  ],
+  '5.1': [
+    { id: 'LhT04a25GLI', title: 'Head voice vs chest voice: what’s the difference?', by: '30 Day Singer', len: '6:58',
+      note: 'What the two voices sound and feel like.' },
+  ],
+  '5.2': [
+    { id: 'BGrCKzvAapA', title: 'Three different sirens', by: 'Dr Dan’s Voice Essentials', len: '5:45',
+      note: 'Slow, quiet sirens through the break.' },
+  ],
+  '6.1': [
+    { id: 'EdbAl7PJlxg', title: 'Stretch and release the neck, jaw, tongue and larynx', by: 'Vox Yoga', len: '9:43',
+      note: 'Do this with the video, then try the lesson.' },
+  ],
+  '6.5': [
+    { id: 'Rd2C2DxFJ48', title: 'Straight tone when you want it', by: 'Amber Mogg Cathey Voice', len: '4:30',
+      note: 'Straight tone versus letting the note relax into vibrato.' },
+    { id: 'SHtZ01-ZiE8', title: 'Legato, staccato, vibrato', by: 'Berklee Online', len: '4:11',
+      note: 'Vibrato is the last of the three.' },
+  ],
+};

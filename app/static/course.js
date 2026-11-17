@@ -417,10 +417,12 @@ route(/^\/lesson\/(\d\.\d)(?:\?(\w+))?$/, async (id, flag) => {
     <p>${esc(lesson.why)}</p>
     <div class="cues">${lesson.cues.map(c => `<span class="cue">${esc(c)}</span>`).join('')}</div>
     ${!daily ? `<p class="dim small">To pass: ${esc(lesson.passText || '70%')}${C.ease ? ` <span class="pill">${ease().name}: ${esc(passSummary(judged))}</span>` : ''}</p>` : ''}
+    ${!daily ? videosHTML(lesson.id) : ''}
     <div id="ex"></div>
     <div id="out"></div>
     ${!daily && !passRec ? `<p class="small dim" style="margin-top:16px">Can’t do this one yet? <button data-skiptop>Skip this lesson for now</button> <a href="#/lessons">Difficulty: ${ease().name}</a></p>` : ''}`;
   const ex = $('#ex'), out = $('#out');
+  bindVideos(view);
   const skipTop = view.querySelector('[data-skiptop]');
   if (skipTop) skipTop.onclick = () => { if (confirm('Skip this lesson for now? The next one unlocks and you can come back to this one any time.')) { skipLesson(id); location.hash = next && isUnlocked(next) ? `#/lesson/${next.id}` : '#/lessons'; } };
   const offs = [];
@@ -458,6 +460,33 @@ route(/^\/lesson\/(\d\.\d)(?:\?(\w+))?$/, async (id, flag) => {
   const start = () => runLesson(judged, s, ex, report, offs, daily).catch(e => toast(e.message, 6000));
   start();
 }, 'lessons');
+
+// ---------------------------------------------------------------- demonstration videos
+// A thumbnail and title per video; the YouTube player only loads when tapped.
+function videosHTML(id) {
+  const vids = (typeof LESSON_VIDEOS !== 'undefined' && LESSON_VIDEOS[id]) || [];
+  if (!vids.length) return '';
+  return `<details class="card videos"${C.passed[id] && !C.passed[id].skipped ? '' : ' open'}><summary><b>Watch how it’s done</b> <span class="dim small">${vids.length} video${vids.length > 1 ? 's' : ''} from vocal coaches</span></summary>
+    ${vids.map(v => `<div class="video" data-vid="${esc(v.id)}">
+      <button class="vthumb" aria-label="Play ${esc(v.title)}"><img loading="lazy" alt="" src="https://i.ytimg.com/vi/${esc(v.id)}/mqdefault.jpg"><span class="vplay">▶</span><span class="vlen">${esc(v.len || '')}</span></button>
+      <div class="vtext"><b>${esc(v.title)}</b><div class="small dim">${esc(v.by)}</div><div class="small">${esc(v.note || '')}</div>
+        <a class="small" href="https://www.youtube.com/watch?v=${esc(v.id)}" target="_blank" rel="noopener">Open in YouTube</a></div>
+    </div>`).join('')}
+  </details>`;
+}
+function bindVideos(root) {
+  root.querySelectorAll('.video .vthumb').forEach(b => b.onclick = () => {
+    const box = b.closest('.video'), id = box.dataset.vid;
+    const f = document.createElement('iframe');
+    f.src = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(id)}?autoplay=1&playsinline=1&rel=0`;
+    f.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen';
+    f.allowFullscreen = true;
+    f.referrerPolicy = 'strict-origin-when-cross-origin';   // YouTube refuses embeds that send no referrer
+    f.title = box.querySelector('.vtext b').textContent;
+    b.replaceWith(f);
+    box.classList.add('playing');
+  });
+}
 
 // ---------------------------------------------------------------- lesson types
 async function runLesson(lesson, s, ex, report, offs, daily) {
