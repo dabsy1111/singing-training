@@ -35,9 +35,9 @@ PITCH_MODEL = os.environ.get("PITCH_MODEL", "swiftf0")   # swiftf0 | crepe (CREP
 CREPE_MODEL = os.environ.get("CREPE_MODEL", "tiny")       # tiny (fast) | full (~15x slower on CPU)
 LEAD_SPLIT = os.environ.get("LEAD_SPLIT", "1") == "1"     # split lead from backing vocals
 KARAOKE_MODEL = Path(os.environ.get("KARAOKE_MODEL", "/models/UVR_MDXNET_KARA_2.onnx"))
-NOTE_MODEL = os.environ.get("NOTE_MODEL", "game")          # game (GAME note model) | contour (notes from the pitch line)
+NOTE_MODEL = os.environ.get("NOTE_MODEL", "game_checked")  # game_checked (GAME notes the pitch line backs up) | game | contour (notes from the pitch line)
 GAME_MODEL = Path(os.environ.get("GAME_MODEL", "/models/GAME-1.0.3-small-onnx"))
-ANALYSIS_VERSION = 3   # 3: GAME notes + loudness curve. bump when re-analysing would give a better melody
+ANALYSIS_VERSION = 4   # 3: GAME notes + loudness curve; 4: GAME notes checked against the pitch line. bump when re-analysing would give a better melody
 DEMUCS_MODEL = os.environ.get("DEMUCS_MODEL", "htdemucs")  # htdemucs | htdemucs_ft | mdx_extra
 THREADS = int(os.environ.get("PROCESS_THREADS", str(os.cpu_count() or 4)))
 PLAYBACK_RATE = 32000   # matches the AudioContext rate the browser uses
@@ -423,13 +423,16 @@ def analyse_vocals(vocals: Path) -> dict:
         tuning = float(np.angle(np.mean(np.exp(2j * np.pi * (v % 1)))) / (2 * np.pi))  # semitones, -0.5..0.5
     note_model = "contour"
     notes = None
-    if NOTE_MODEL == "game" and (GAME_MODEL / "encoder.onnx").exists():
+    if NOTE_MODEL in ("game", "game_checked") and (GAME_MODEL / "encoder.onnx").exists():
         try:
             notes = game_notes(vocals, gate, rms_db, tuning)
             note_model = "game"
+            if NOTE_MODEL == "game_checked":
+                notes = check_notes(notes, midi - tuning)
+                note_model = "game_checked"
         except Exception:  # noqa: BLE001 - fall back to the pitch-line notes
             log.exception("GAME note model failed; using notes from the pitch line")
-    elif NOTE_MODEL == "game":
+    elif NOTE_MODEL in ("game", "game_checked"):
         log.warning("GAME model not found at %s; using notes from the pitch line", GAME_MODEL)
     fallback = segment_notes(midi - tuning)
     if notes is not None:
@@ -509,6 +512,27 @@ def game_notes(vocals: Path, gate: np.ndarray, rms_db: np.ndarray, tuning: float
             continue
         notes.append({"t0": round(t0, 3), "t1": round(t1, 3), "midi": int(round(m - tuning))})
     return notes
+
+
+def check_notes(notes: list[dict], midi: np.ndarray, min_voiced=0.3, max_off=0.75) -> list[dict]:
+    """Keep the GAME notes the pitch line backs up. GAME also puts notes on screams, harsh
+    consonants and noise; on Holding Absence's Kyoto Snow (studio vs live) those extra notes
+    matched the pitch line only 19% of the time, and dropping them took studio/live note
+    agreement from 80% back to 90% (the old notes' level) while covering 90% of the melody
+    instead of 87.5%, with GAME's whole-syllable notes. midi: pitch line in the song's tuning."""
+    out = []
+    for n in notes:
+        a, b = int(round(n["t0"] / HOP_S)), int(round(n["t1"] / HOP_S))
+        seg = midi[a:b]
+        if not len(seg):
+            continue
+        v = seg[~np.isnan(seg)]
+        if len(v) < min_voiced * len(seg):
+            continue                                   # little or no pitch: scream, consonant, noise
+        if abs(float(np.median(v)) - n["midi"]) > max_off:
+            continue                                   # the pitch line says it's another note
+        out.append(n)
+    return out
 
 
 def _swiftf0(audio, sr, n_frames):

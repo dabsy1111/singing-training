@@ -20,6 +20,7 @@ class Game:
                  seg_threshold: float = 0.2, radius: int = 2, est_threshold: float = 0.2):
         import onnxruntime as ort
 
+        self.ort = ort
         d = Path(model_dir)
         self.cfg = json.loads((d / "config.json").read_text())
         self.sr = int(self.cfg["samplerate"])
@@ -31,6 +32,7 @@ class Game:
         def load(name):
             return ort.InferenceSession(str(d / f"{name}.onnx"), sess_options=opts, providers=["CPUExecutionProvider"])
 
+        self._load = load
         self.enc, self.seg, self.est = load("encoder"), load("segmenter"), load("estimator")
         self.d2b, self.b2d = load("dur2bd"), load("bd2dur")
         self.seg_inputs = {i.name for i in self.seg.get_inputs()}
@@ -68,6 +70,11 @@ class Game:
 
     def transcribe(self, wav: np.ndarray, phrases: list[tuple[int, int]], language: int = 0):
         """Notes over a whole vocal. phrases: [(start_sample, end_sample)] at self.sr."""
+        # The segmenter's denoising steps draw random numbers (a RandomUniformLike with no seed),
+        # and its generator carries on from song to song. Reloading it with a fixed seed per song
+        # makes the same song give the same notes every time (~0.3 s).
+        self.ort.set_seed(1234)
+        self.seg = self._load("segmenter")
         notes = []
         for a, b in phrases:
             if b - a < int(0.2 * self.sr):
