@@ -16,7 +16,7 @@ const COURSE = [
         why: 'The app needs your comfortable range so every exercise fits your voice, and your headphone delay so your notes line up with the music.',
         cues: ['Comfortable, not your limit', 'Headphones on'],
         passText: 'Range saved and timing measured' },
-      { id: '1.2', title: 'Stand like a singer', type: 'sustain',
+      { id: '1.2', title: 'Stand like a singer', type: 'sustain', mirror: true,
         why: 'How you stand changes how freely you breathe and how relaxed your throat is. Start every session standing like this.',
         cues: ['Feet hip-width, knees soft', 'Head balanced, chin level', 'Shoulders down and loose'],
         params: { notes: ['mid', 'mid', 'mid'], hold: 4, label: 'hum' },
@@ -25,7 +25,7 @@ const COURSE = [
         why: 'Singing breath fills low and wide around the ribs, not up in the shoulders. Keeping the ribs open as you let the air out gives you steady, even air for a steady note.',
         cues: ['Ribs widen to the sides and back', 'Shoulders stay still', 'Let the ribs stay open as you hiss, don’t squeeze'],
         params: { seconds: 10 }, pass: { metric: 'breath', seconds: 10 }, passText: 'Hiss 10 s at an even level' },
-      { id: '1.4', title: 'Lip trills and straws', type: 'glide',
+      { id: '1.4', title: 'Lip trills and straws', type: 'glide', mirror: true,
         why: 'Buzzing the lips (“brrr”) or singing through a drinking straw partly closes the mouth, which lets the voice work with less effort. Teachers use them to warm up and voice clinics use them in therapy.',
         cues: ['Keep it light and quiet', 'Air keeps moving, never pushed', 'Glide up and back down'],
         params: { seconds: 25, count: 3, span: 5, label: 'brrr glides' },
@@ -100,6 +100,11 @@ const COURSE = [
         why: 'Long notes are where pitch sags. This builds steady breath across your range.',
         cues: ['Pitch sags when breath fades', 'Keep the energy steady to the end'],
         params: { notes: ['low', 'mid', 'high'], hold: 7, label: 'ah' } },
+      { id: '3.6', title: 'Light and bouncy', type: 'staccato',
+        why: 'Short, light notes (staccato) train the breath muscles to start each note cleanly and quickly, without a push from the throat. Runs and fast songs are built on this.',
+        cues: ['Like a light laugh: ha-ha-ha', 'Each note is a small bounce from the belly', 'Throat stays still'],
+        params: { pattern: [0, 4, 7, 4, 0], roots: ['home-2', 'home', 'home+2', 'home+4'], note: 0.3, gap: 0.22, label: 'ha' },
+        pass: { metric: 'complete' }, passText: 'Sing it through; aim for short, separate dots on the line' },
     ],
   },
   {
@@ -153,29 +158,33 @@ const COURSE = [
         why: 'Narrower vowels near the top help the voice lighten instead of shouting.',
         cues: ['Narrower vowel near the top', 'Lighter as you climb, not louder'],
         params: { drills: ['scale5'], label: 'oo / nay', topHalf: true } },
-      { id: '5.5', title: 'Octave leaps', type: 'drill',
+      { id: '5.5', title: 'Octave leaps', type: 'drill', mirror: true,
         why: 'An octave jump crosses the break in one step.',
         cues: ['Light top note', 'Don’t reach with your chin'], params: { drills: ['octave'] } },
       { id: '5.6', title: 'Range check', type: 'range',
         why: 'Range grows from this gentle work, a semitone at a time. Retest and widen it only if both ends now feel steady.',
         cues: ['Comfortable, never strained'], pass: { metric: 'complete' }, passText: 'Range re-saved' },
+      { id: '5.7', title: 'Finding your mix', type: 'drill', mirror: true,
+        why: 'The mix is a thinner, lighter fold setting that still sounds like your speaking voice. It lets you sing high notes strongly without shouting or flipping to a breathy falsetto. Bratty, nasal sounds pull the voice into it.',
+        cues: ['Bratty “nay”, like a whiny kid', 'Small and twangy, not loud', 'Same effort as you go up'],
+        params: { drills: ['arpeggio'], label: 'nay (bratty)', topHalf: true } },
     ],
   },
   {
     id: 6, title: 'Tone, vowels and tension',
     intro: 'Free up the jaw and tongue, and keep pitch centred when the vowel or volume changes. A tight jaw or a pulled-back tongue muddies the sound and drags pitch down.',
     lessons: [
-      { id: '6.1', title: 'Loose jaw and tongue', type: 'sustain',
+      { id: '6.1', title: 'Loose jaw and tongue', type: 'sustain', mirror: true,
         why: 'Opening from a hum to “ah” without resetting the jaw keeps the throat free.',
         cues: ['Jaw hangs, it isn’t held open', 'Tongue tip rests behind the bottom teeth'],
         params: { notes: ['home', 'home+2', 'home+4', 'home+2'], hold: 3, label: 'm-ah' },
         pass: { metric: 'drift', cents: 30, score: 70 }, passText: '70%, pitch steady through the open' },
-      { id: '6.2', title: 'Same note, five vowels', type: 'vowels',
+      { id: '6.2', title: 'Same note, five vowels', type: 'vowels', mirror: true,
         why: 'Vowels change the shape inside your mouth, which can pull the pitch. The note should stay put.',
         cues: ['Small mouth changes', 'Pitch line stays flat as the vowel changes'],
         params: { notes: ['home+2', 'home+5'], vowels: ['ee', 'eh', 'ah', 'oh', 'oo'], each: 1.6 },
         pass: { metric: 'vowels', cents: 25 }, passText: 'No vowel more than 25¢ off' },
-      { id: '6.3', title: 'Brighter to fix flat', type: 'drill',
+      { id: '6.3', title: 'Brighter to fix flat', type: 'drill', mirror: true,
         why: 'Dark, heavy vowels sit flat. A slightly brighter sound, cheeks lifted a touch, lifts the pitch with it.',
         cues: ['Slight lift in the cheeks', 'Bright, not shouty'],
         params: { drills: ['scale5'], label: 'bright ah', maxRoots: 6 },
@@ -198,6 +207,11 @@ const COURSE = [
           { type: 'sustain', params: { notes: ['home', 'home-2'], hold: 3, label: 'hum' }, title: 'Hums' },
         ] },
         pass: { metric: 'complete' }, passText: 'Complete it; it’s offered at the end of every session after this' },
+      { id: '6.7', title: 'Swell and fade', type: 'volume',
+        why: 'Starting a note soft, growing it, then shrinking it again without the pitch moving (messa di voce) is the classic test of breath and voice working together.',
+        cues: ['Soft, grow, soft: one smooth curve', 'Pitch line stays flat', 'More breath energy, not more throat'],
+        params: { notes: ['home+2', 'home'], parts: ['soft', 'loud', 'soft'], each: 2.5 },
+        pass: { metric: 'volume', ratio: 1.8, score: 70 }, passText: '70%, middle clearly louder, pitch steady' },
     ],
   },
   {
@@ -312,5 +326,332 @@ const LESSON_VIDEOS = {
       note: 'Straight tone versus letting the note relax into vibrato.' },
     { id: 'SHtZ01-ZiE8', title: 'Legato, staccato, vibrato', by: 'Berklee Online', len: '4:11',
       note: 'Vibrato is the last of the three.', start: 22, parts: [[22, 'Legato'], [151, 'Staccato'], [203, 'Practice tips']] },
+  ],
+};
+
+/* How to make the sound: step-by-step body instructions shown on each lesson page
+ * (open until the lesson is passed). Plain strings; keep each step to one or two short sentences. */
+const LESSON_HOW = {
+  '1.1': [
+    'Put your headphones on now. Without them the app hears its own notes through your mic.',
+    'For the range test, slide on a gentle “ah” from a comfortable low note to a comfortable high one. Stop where it starts to feel tight, not where it cracks.',
+    'For the timing check, sing a short, clear “da” on each beep. Medium volume is enough.',
+  ],
+  '1.2': [
+    'Feet hip-width apart, weight slightly forward on the balls of the feet. Knees soft, never locked.',
+    'Lift your breastbone a little, as if a string pulls it up, then let the shoulders drop away from your ears.',
+    'Balance your head on top of your spine with the chin level. Don’t poke the chin forward, especially on high notes.',
+    'Let the jaw hang loose and rest the tip of your tongue behind your bottom front teeth.',
+    'Hum with lips gently closed and teeth apart. You should feel a buzz on your lips and around your nose. Turn on the mirror to check your shoulders and chin stay still.',
+  ],
+  '1.3': [
+    'Put your hands on your lower ribs at the sides, thumbs toward your back.',
+    'Breathe in silently through the nose or an open mouth. Feel the ribs push your hands out at the sides and back, and the belly soften forward. Shoulders and upper chest stay still.',
+    'Before the hiss, try four short “sh! sh! sh! sh!” bursts. The muscles below your navel should pulse inward, not your chest.',
+    'Now breathe in again, pause for two counts with the throat open (don’t lock it shut), then hiss “sss” through your teeth.',
+    'Hiss small and steady, like a slow leak from a tyre. Try to keep the ribs from collapsing; the belly slowly moves in instead.',
+  ],
+  '1.4': [
+    'Lip trill: close your lips loosely, puff a steady stream of air so they flutter like a horse’s “brrr”, then add a soft voice.',
+    'If the lips won’t flutter, press a fingertip into each cheek beside the corners of your mouth. That takes the weight off the lips.',
+    'Straw instead: hum through a narrow drinking straw (a coffee stirrer is ideal). Lips sealed around it, no air leaking out of the nose.',
+    'Glide from a low note up to a comfortable high one and back down, like a slow siren. Keep it quiet.',
+    'The air is what keeps it going. If the trill stops, you’ve cut the air, not run out of voice.',
+  ],
+  '1.5': [
+    'Hum first: lips together, teeth apart, tongue resting down. Aim the buzz at your lips.',
+    'Then one lip-trill glide, up and back down.',
+    'Then the five-note scale on “mum”: think of a dopey, relaxed sound. The “m” keeps the buzz forward and the “u” keeps the throat open.',
+    'Everything easy and quiet. Warm-ups are for waking the voice, not testing it.',
+  ],
+  '2.1': [
+    'Say “hey” like you’re greeting a friend across the room. Don’t perform it, just say it.',
+    'Notice the pitch it lands on. That’s your speaking note.',
+    'Now sing “hey” on that same pitch and hold it, keeping the same easy, talky feel.',
+  ],
+  '2.2': [
+    'Listen to the whole reference note without singing.',
+    'During “think it…”, hear the note in your head as if you were about to sing it. Some people feel the throat get ready silently; that’s good.',
+    'Then sing “ah” on it: jaw dropped, tongue tip touching the bottom teeth.',
+    'If the line shows you’re off, don’t jump. Ease toward the target and listen for the sound to settle.',
+  ],
+  '2.3': [
+    'Start a little below the note on a hum or “ah” and slide slowly upward.',
+    'Listen for the moment your voice and the reference stop “wobbling” against each other. When in tune, the sound locks and smooths out.',
+    'Stop and hold the instant the line turns green. Don’t overshoot.',
+  ],
+  '2.4': [
+    'Take a low breath first (Lesson 1.3).',
+    'Open your mouth more than you think: about two fingers between the teeth on “ah”.',
+    'Sing at speaking-across-a-room volume. Loud enough to hear yourself clearly, never shouting.',
+    'Keep the note going the whole bar. Short notes hide whether you’re in tune.',
+  ],
+  '2.5': [
+    'Listen to both notes all the way through before choosing.',
+    'If unsure, hum each one quietly. Your throat often knows before your ear does: it rises for the higher note.',
+  ],
+  '2.6': [
+    'Listen to the whole pattern before you echo it.',
+    'Sing on “ah” or “la”, one clear note per beat.',
+    'Going up, aim a hair higher than you think. Most beginners land flat on rising notes.',
+  ],
+  '3.1': [
+    'Breathy start: sing “ha”. Air comes before the sound and you hear the h.',
+    'Hard start: sing “ah!” as if startled. You’ll feel a little click or catch in the throat as the note starts.',
+    'Balanced start: imagine the h but don’t let it out, then sing “ah”. Air and sound arrive together, with no click and no puff.',
+    'Feel the difference. The balanced one is what you want for almost every note.',
+  ],
+  '3.2': [
+    'Before each note, silently think “h”.',
+    'Start the vowel on that thought: clean, no hiss before it, no click at the start.',
+    'If you hear a click, start with a little more air. If you hear a hiss, start with a little less.',
+  ],
+  '3.3': [
+    'Breathe in low and wide.',
+    'As you sing, keep the ribs wide and let the belly move in slowly, like the hiss in Lesson 1.3.',
+    'Same effort at the end of the note as at the start. Pitch drops when the support drops.',
+  ],
+  '3.4': [
+    'End the note by stopping the air, not by closing the throat or the jaw.',
+    'Keep the mouth shape and the energy right until the last instant.',
+    'If the end sags flat, think of the note “lifting” slightly as it finishes.',
+  ],
+  '3.5': [
+    'Full, low breath before each note.',
+    'Start at a medium volume and keep it steady. Don’t start loud and fade.',
+    'Pace the air: the ribs stay out, the belly comes in slowly. If you run out, the next one will go better with a fuller breath.',
+  ],
+  '3.6': [
+    'Say “ha-ha-ha” like a small, light laugh. Put a hand on your belly; each “ha” is a tiny inward bounce.',
+    'Now pitch it: each note short and separate, with a little gap of silence between them.',
+    'The throat stays still. The bounce comes from below, not from a push in the neck.',
+    'Keep it light and quiet. Staccato that gets loud turns into shouting.',
+  ],
+  '4.1': [
+    'Sing on “mah”, one note per beat.',
+    'Small moves need only small changes. Don’t reset the jaw or the breath between notes.',
+  ],
+  '4.2': [
+    'The five notes are do-re-mi-fa-sol and back down (1-2-3-4-5-4-3-2-1).',
+    'Hear the next note in your head just before you move to it.',
+    'Each round starts a semitone higher. As you climb, get lighter, not louder.',
+  ],
+  '4.3': [
+    'One breath for the whole scale, one vowel (“oo”), no gaps between the notes.',
+    'Keep the lips rounded and the tongue still; only the pitch changes.',
+    'Think of the notes as beads on one string.',
+  ],
+  '4.4': [
+    'Before you leave the bottom note, picture the top note.',
+    'Arpeggios are do-mi-sol-do (1-3-5-8). Land on each note cleanly instead of sliding up to it.',
+    'Keep the jaw still on the jumps. Only the voice moves.',
+  ],
+  '4.5': [
+    'Tune anchors help: a step is the start of “Happy Birthday” (“-py Birth-”), a 4th is “Here Comes the Bride”, a 5th is the Star Wars theme, an octave is “Some-where” from “Over the Rainbow”.',
+    'Hum both notes quietly and compare them with the anchors.',
+  ],
+  '4.6': [
+    'Listen to the start note, read the jump, then hear the target in your head.',
+    'Use the tune anchors from Lesson 4.5 if you need them.',
+    'Sing the target on “ah” and hold it. Adjust slowly if the line says you missed.',
+  ],
+  '4.7': [
+    'In a minor scale the third note is a semitone lower than in major. It sounds darker or sadder.',
+    'Listen for that third note and aim for it deliberately. It’s the one most people sing too high.',
+  ],
+  '5.1': [
+    'Chest voice: say “hey” low, like talking to a mate. Put a hand on your chest and feel the buzz there.',
+    'Head voice: say “hoo” high and light, like an owl. The buzz moves up behind your eyes and into the top of your head; the chest goes quiet.',
+    'Keep both easy. Head voice should be light but clear, not airy or whispery.',
+  ],
+  '5.2': [
+    'Choose a lip trill, straw, or “ng” (the end of the word “sung”: back of the tongue against the soft palate, sound coming out of the nose).',
+    'Slide very slowly from your lowest comfortable note to your highest and back, like a siren with no gaps.',
+    'Somewhere in the middle the voice may flip or crack. That’s the break. Don’t push through it; keep the air steady and let it flip if it wants to.',
+    'Over a few sessions the flip gets smaller. That’s the goal.',
+  ],
+  '5.3': [
+    'Start high and light on “oo” or “ng”.',
+    'Slide down slowly, keeping some of that lightness as you go. Don’t let the voice suddenly thicken and drop into a heavy sound.',
+    'Smooth matters more than loud. If it clunks, start a little quieter.',
+  ],
+  '5.4': [
+    'Near the top of each scale, narrow the vowel: “oo” instead of “ah”, or a bratty, nasal “nay”.',
+    'Narrower vowels keep the voice from spreading into a shout as it climbs.',
+    'Get lighter as you go up. Volume should drop a touch through the break, not rise.',
+  ],
+  '5.5': [
+    'Sing the bottom note full and speech-like, then jump straight to the octave above.',
+    'Lighten the top note. Think of it floating rather than reaching.',
+    'Watch the mirror: no chin lifting, no neck straining.',
+  ],
+  '5.6': [
+    'Same as the first range test: slide on a gentle “ah” and stop at comfortable, not at your limit.',
+    'Widen by a semitone only if both ends now feel steady and easy.',
+  ],
+  '5.7': [
+    'Say “nay” like a whiny, bratty child: “nay-nay-nay!” It should be nasal and a bit ugly. That twang thins the folds while keeping them closed.',
+    'Sing it on do-mi-sol-do-sol-mi-do, starting in the middle of your range and moving up each round.',
+    'Keep the sound small. As it gets higher, the effort in the throat shouldn’t grow.',
+    'When it feels easy, try “gee” (as in “geese”) the same way: the g closes the folds firmly and the narrow “ee” stays light.',
+    'Once it’s easy, make it less nasal bit by bit. What’s left is your mix.',
+  ],
+  '6.1': [
+    'Put your fingertips in front of your ears and open your mouth. Feel a small hollow open there: that’s the jaw hinging properly.',
+    'Let the jaw drop down and slightly back. Don’t push the chin forward.',
+    'Hum on the note, then open to “ah” without changing anything else. Tongue tip stays resting behind the bottom teeth.',
+    'Watch the mirror for jaw jutting, chin lifting or a tight neck.',
+  ],
+  '6.2': [
+    'ee (see): tongue high and forward, sides touching the upper back teeth, lips slightly spread, jaw nearly closed.',
+    'eh (bed): tongue a little lower, jaw a little more open.',
+    'ah (father): tongue low and flat, jaw most open, about two fingers.',
+    'oh (go, without the “w” at the end): tongue back, lips in a rounded oval.',
+    'oo (food): lips small and rounded, slightly forward.',
+    'The tongue tip stays behind the bottom front teeth for all five. Only the tongue’s middle and the lips change; the pitch shouldn’t.',
+  ],
+  '6.3': [
+    'Lift the cheeks slightly, as if starting a smile (not a wide grin).',
+    'Think of the sound sitting forward, around the nose and front teeth, rather than down in the throat.',
+    'Bright isn’t loud. Keep the volume medium.',
+  ],
+  '6.4': [
+    'Soft: less volume, not less clarity. Keep a clear core of sound, no breathiness.',
+    'Medium: more breath energy from the belly. The throat doesn’t squeeze to make it louder.',
+    'Watch the pitch line as the volume changes. It should stay flat.',
+  ],
+  '6.5': [
+    'Straight half: hold the note perfectly still, no wobble.',
+    'Free half: relax the throat and jaw and keep the breath steady. If a gentle wobble appears on its own, let it. That’s vibrato.',
+    'Don’t make vibrato with the jaw or by pulsing the belly. If nothing comes yet, that’s fine; it arrives with time.',
+  ],
+  '6.6': [
+    'Gentle slides from high to low on “oo” or a hum.',
+    'Then a few quiet hums. Let the voice settle back toward speaking.',
+  ],
+  '6.7': [
+    'Start the note soft but clear.',
+    'Grow it by adding breath energy from the belly while keeping the throat and jaw exactly as they are.',
+    'Then shrink it back to soft. The pitch line should stay flat through the whole curve; most people go sharp as they get louder and flat as they get softer.',
+  ],
+  '7.1': [
+    'Pick a song you know well and like. Ballads are easier than fast, wordy songs.',
+    'Over 90% in range is ideal. On the song page you can shift the key to fit.',
+  ],
+  '7.2': [
+    'Sing the melody on “doo” or a lip trill, with the guide vocal up loud.',
+    'No words yet. This shows pitch problems without the words getting in the way.',
+  ],
+  '7.3': [
+    'Add the words, but sing on the vowels. Hold the vowel for the whole note and keep consonants quick and light.',
+    'Diphthongs (“night” = ah + ee, “day” = eh + ee): sing the first vowel and slip the second in only at the very end.',
+  ],
+  '7.4': [
+    'Breathe only at the marks, where the melody leaves a gap.',
+    'Take a low, quick breath (ribs out, belly soft) and start the next note cleanly.',
+  ],
+  '7.5': [
+    'Sing the whole section. If you miss a note, let it go and reset for the next line.',
+    'Use the loop and slow-down on any bar you keep missing, then go back to full speed.',
+  ],
+  '7.6': [
+    'Recordings sound strange at first because you normally hear yourself through your skull. The recording is what everyone else hears.',
+    'Listen once just to enjoy it, then once to note one thing you liked and one to fix.',
+  ],
+  '8.1': [
+    'Hear the target clearly before you leave the bottom note.',
+    'Lighten the top note and don’t reach with your chin. Narrow the vowel slightly if it’s high.',
+  ],
+  '8.2': [
+    'Speed comes from lightness. Sing quietly and keep each note tiny.',
+    'Start slow on the song page or here until every note lands, then let the tempo rise.',
+  ],
+  '8.3': [
+    'Guide vocal off. Listen to the bass and chords: they tell you the key.',
+    'If you get lost, hum the next phrase quietly until you find it.',
+  ],
+  '8.4': [
+    'A third below moves in the same shape as the tune, just lower.',
+    'The melody will try to pull you onto it. Listen to the music underneath, not the singer.',
+  ],
+  '8.5': [
+    'Same approach as 8.4: a third above, then a sixth below. Keep your own line in your head.',
+  ],
+  '8.6': [
+    'Warm up first. Then sing the whole song, in your key and part.',
+    'Enjoy it. This one is pinned to Progress so you can compare it with your first takes.',
+  ],
+};
+
+/* How it works: background for each unit, shown on the Lessons page and inside each lesson.
+ * Blocks: { h }, { p }, { list: [...] }, { table: { head: [...], rows: [[...], ...] } }. */
+const UNIT_LEARN = {
+  1: [
+    { p: 'Every sung note has three parts: air from the lungs (the power), the vocal folds in your throat (the source of the sound) and the throat, mouth and nose (the shape that turns the buzz into a vowel and a tone).' },
+    { h: 'The vocal folds' },
+    { p: 'Two small bands of muscle in your larynx, the bump behind your Adam’s apple. Air blows them apart and they snap back together hundreds of times a second. An A3 (220 Hz) means they meet 220 times each second.' },
+    { p: 'To go higher, the folds are stretched longer and thinner, like tightening a guitar string. To go lower, they shorten and thicken. You don’t control those muscles directly; you think of the pitch, and exercises like these coax the right coordination.' },
+    { h: 'Why breath matters' },
+    { p: 'The folds need a steady, moderate air pressure. Keeping the ribs open while you sing (teachers call it appoggio, “leaning”) stops the air arriving as a blast followed by nothing.' },
+    { h: 'Looking after your voice' },
+    { list: [
+      'Singing should never hurt. Scratch, strain or hoarseness means stop, sip water, and go back to humming or lip trills.',
+      'Drink water through the day. The folds are hydrated from the inside, hours ahead.',
+      'Don’t clear your throat hard; swallow instead. Whispering strains more than quiet talking.',
+      'Short daily sessions (20–30 minutes) beat one long one. After a day of talking over noise, keep it light.',
+      'Hoarseness lasting more than two weeks, or pain when singing, is worth seeing an ENT or speech pathologist.',
+    ] },
+  ],
+  2: [
+    { p: 'Pitch is how often the vocal folds vibrate per second. Singing in tune means matching that rate to the note you hear.' },
+    { p: 'When two notes are nearly the same, they “beat”: you hear a wobble. As you get closer the wobble slows, and when you’re in tune it disappears. Listen for that lock.' },
+    { p: 'A semitone is the smallest step on a piano. A cent is a hundredth of a semitone; within about 20 cents sounds in tune to most listeners.' },
+  ],
+  3: [
+    { p: 'Every note has a start (onset), a middle and an end. Clean starts come from air and fold closure arriving at the same moment.' },
+    { table: { head: ['Start', 'What happens', 'Sounds like'], rows: [
+      ['Breathy', 'Air flows before the folds close', 'An “h” before the note'],
+      ['Hard (glottal)', 'Folds shut tight, then burst open', 'A click or catch'],
+      ['Balanced', 'Air and closure together', 'A clean, instant start'],
+    ] } },
+    { p: 'Pitch sags at the end of long notes when breath support fades, which is why the hiss work in Unit 1 comes first.' },
+  ],
+  4: [
+    { p: 'Scale numbers count notes up a major scale from the starting note: 1 is do, 2 re, 3 mi, 4 fa, 5 sol, 8 the octave. A “1-3-5” pattern is do-mi-sol.' },
+    { p: 'Melodies move mostly by small steps, with the occasional jump. Hearing the next note in your head before you sing it is the habit that makes both land.' },
+  ],
+  5: [
+    { p: 'Your voice has registers, like gears. Each is a different way the folds vibrate.' },
+    { table: { head: ['Register', 'The folds', 'Feels like', 'Used for'], rows: [
+      ['Chest', 'Thick, full contact', 'Buzz in the chest, like talking', 'Low and middle notes'],
+      ['Head', 'Thinner, stretched', 'Buzz behind the eyes and in the skull', 'High, lighter notes'],
+      ['Falsetto', 'Very thin, barely closing', 'Hooty and breathy', 'Effects, very high soft notes'],
+      ['Mix', 'Thinning but still closed', 'Speech-like, sitting high in the face', 'Strong high notes without shouting'],
+    ] } },
+    { p: 'The break (passaggio) is where the voice changes gear. For most men it’s around D4–G4; for most women around E4–A4 and again near C5–F5. Lip trills, straws and “ng” make it hard to crack, which is why they’re used to smooth it out.' },
+  ],
+  6: [
+    { p: 'The raw buzz from the folds sounds like a duck call. Your throat and mouth shape it: tongue, jaw, lips, soft palate and larynx height decide the vowel and whether the tone is bright or dark.' },
+    { table: { head: ['Vowel', 'Tongue', 'Lips', 'Jaw open'], rows: [
+      ['ee (see)', 'High, forward', 'Slightly spread', 'One finger'],
+      ['eh (bed)', 'Forward, a bit lower', 'Relaxed', 'Two fingers'],
+      ['ah (father)', 'Low and flat', 'Relaxed, slightly round', 'Two to three fingers'],
+      ['oh (go)', 'Back, middle height', 'Rounded oval', 'Two fingers'],
+      ['oo (food)', 'Back, high', 'Small, rounded, forward', 'One finger'],
+    ] } },
+    { list: [
+      'Tongue tip rests behind the bottom front teeth on every vowel.',
+      'Lift the soft palate with the very start of a yawn, or a look of gentle surprise. Not a full yawn: that pulls the larynx too low.',
+      'Rest a finger on your Adam’s apple as you slide up. A small rise is fine; a jump toward the chin means squeezing.',
+      'High notes: nudge vowels toward the middle. ee leans to ih (sit), ah leans to uh (cup).',
+    ] },
+  ],
+  7: [
+    { p: 'Learn songs in layers: listen, then melody on a trill or “doo”, then vowels only, then words. Loop the hard bars slowly and bring the speed back up.' },
+    { p: 'Pick songs whose top note is at least two semitones below the top of your range, and shift the key freely. Singing in your own key is what professionals do.' },
+  ],
+  8: [
+    { p: 'Vibrato is a natural pitch wobble of about 5–7 cycles a second, a quarter to half a semitone wide. It appears when the throat is free and the breath steady; forcing it with the jaw or belly sounds wobbly rather than warm.' },
+    { p: 'Faster runs and wider jumps both come from lightness. When something gets hard, sing it quieter and narrower before trying it louder.' },
   ],
 };

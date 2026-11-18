@@ -68,7 +68,7 @@ function passSummary(l) {
     case 'onset': return `start score ${Math.round(q.value * 100)}%`;
     case 'slide': return `${q.count} slides held ${q.seconds} s`;
     case 'vowels': return `every vowel within ${q.cents}¢`;
-    case 'volume': return `${q.score}%, medium ${q.ratio.toFixed(1)}× louder`;
+    case 'volume': return `${q.score}%, ${l.params?.parts?.[1] || 'medium'} ${q.ratio.toFixed(1)}× louder`;
     case 'straight': return `straight notes within ${q.cents}¢`;
     case 'glides': return `${q.count} glide${q.count > 1 ? 's' : ''}, ${Math.round(e.span * 100)}% of the span${lessonById(l.id)?.pass?.smooth && !q.smooth ? ', gaps allowed' : ''}`;
     case 'ear': return `${q.correct} of 10`;
@@ -191,6 +191,17 @@ const BUILD = {
     }
     return finish(notes, cues, t, s);
   },
+  staccato(p, s) {
+    const notes = [], cues = []; let t = 0.6;
+    for (const r of p.roots) {
+      const root = pos(r, s);
+      p.pattern.forEach((iv, k) => cues.push({ t0: t + k * 0.45, t1: t + k * 0.45 + 0.38, midi: root + iv }));
+      t += p.pattern.length * 0.45 + 0.4;
+      p.pattern.forEach(iv => { notes.push({ t0: t, t1: t + p.note, midi: root + iv, label: p.label, guide: false }); t += p.note + p.gap; });
+      t += 0.9;
+    }
+    return finish(notes, cues, t, s);
+  },
   drill(p, s) {
     const tg = buildDrill(p.drills, s, p.tempo || 1, true, { label: p.label, maxRoots: p.maxRoots, topHalf: p.topHalf });
     return { ...tg, marks: [] };
@@ -266,7 +277,7 @@ function evaluate(lesson, P, res, s, extra = {}) {
         if (soft > 0 && med / soft >= pass.ratio) good++;
       }
       passed = ok70(pass.score) && groups > 0 && good >= Math.ceil(groups / 2);
-      detail = `medium clearly louder in ${good} of ${groups}`; break;
+      detail = `${st[1]?.n.label || 'medium'} clearly louder in ${good} of ${groups}`; break;
     }
     case 'straight': {
       const str = st.filter(x => x.n.label === 'straight');
@@ -322,7 +333,7 @@ function tipFor(lesson, st, res, s) {
 // ---------------------------------------------------------------- running a pitch exercise on the stage
 function runPracticeOnce(stageEl, target, s, opts = {}) {
   stageEl.innerHTML = '';
-  const P = new Practice(stageEl, target, { synth: true }, { settings: s, volumes: { guide: 0.7 }, start: 0, marks: target.marks, onFrame: opts.onFrame });
+  const P = new Practice(stageEl, target, { synth: true }, { settings: s, volumes: { guide: 0.7 }, start: 0, marks: target.marks, onFrame: opts.onFrame, record: true });
   let resolveDone;
   const done = new Promise(r => { resolveDone = r; });
   const orig = P.stop.bind(P);
@@ -357,6 +368,7 @@ route(/^\/lessons$/, async () => {
     ${COURSE.map(u => `
       <h2>Unit ${u.id} · ${esc(u.title)}${u.id < C.placedUnit ? ' <span class="pill">placed past</span>' : ''}</h2>
       <p class="dim small" style="margin-top:-4px">${esc(u.intro)}</p>
+      ${learnHTML(u.id, false)}
       <div class="card lessons">${u.lessons.map(l => {
         const lu = { ...l, unit: u.id }, open = isUnlocked(lu), p = C.passed[l.id];
         const icon = p?.skipped ? '↷' : p ? '✓' : open ? '▶' : '🔒';
@@ -417,12 +429,16 @@ route(/^\/lesson\/(\d\.\d)(?:\?(\w+))?$/, async (id, flag) => {
     <p>${esc(lesson.why)}</p>
     <div class="cues">${lesson.cues.map(c => `<span class="cue">${esc(c)}</span>`).join('')}</div>
     ${!daily ? `<p class="dim small">To pass: ${esc(lesson.passText || '70%')}${C.ease ? ` <span class="pill">${ease().name}: ${esc(passSummary(judged))}</span>` : ''}</p>` : ''}
+    ${howHTML(lesson.id, daily || (passRec && !passRec.skipped))}
+    ${lesson.mirror ? '<p><button id="mirror">🪞 Mirror: watch your jaw, chin and shoulders</button></p>' : ''}
     ${!daily ? videosHTML(lesson.id) : ''}
+    ${!daily ? learnHTML(lesson.unit, true) : ''}
     <div id="ex"></div>
     <div id="out"></div>
     ${!daily && !passRec ? `<p class="small dim" style="margin-top:16px">Can’t do this one yet? <button data-skiptop>Skip this lesson for now</button> <a href="#/lessons">Difficulty: ${ease().name}</a></p>` : ''}`;
   const ex = $('#ex'), out = $('#out');
   bindVideos(view);
+  if (lesson.mirror) $('#mirror').onclick = () => toggleMirror(offs);
   const skipTop = view.querySelector('[data-skiptop]');
   if (skipTop) skipTop.onclick = () => { if (confirm('Skip this lesson for now? The next one unlocks and you can come back to this one any time.')) { skipLesson(id); location.hash = next && isUnlocked(next) ? `#/lesson/${next.id}` : '#/lessons'; } };
   const offs = [];
@@ -434,8 +450,9 @@ route(/^\/lesson\/(\d\.\d)(?:\?(\w+))?$/, async (id, flag) => {
     const score = res?.score ?? extra.score ?? null;
     if (!daily) recordAttempt(id, score, ev.passed);
     else if (ev.passed || lesson.pass?.metric === 'complete') { C.warmups[today()] = true; saveCourse(); }
-    if (res && res.score != null && res.notes?.length >= 2)
-      saveRun('lesson', id, `Lesson ${id}: ${lesson.title}`, res, { lesson: id, passed: ev.passed }).catch(() => {});
+    if (res && res.score != null && res.notes?.length >= 2)   // the take is only kept on the server with “Record my takes” on
+      saveRun('lesson', id, `Lesson ${id}: ${lesson.title}`, s.recordTakes ? res : { ...res, take: null }, { lesson: id, passed: ev.passed }).catch(() => {});
+    const take = res?.take || extra.take;
     const nextOpen = next && isUnlocked(next);
     out.innerHTML = `<div class="card ${ev.passed ? 'pass' : ''}">
       <div class="row"><b class="grow" style="font-size:20px">${ev.passed ? (daily ? 'Done ✓' : 'Passed ✓') : 'Not yet'}</b>
@@ -443,7 +460,7 @@ route(/^\/lesson\/(\d\.\d)(?:\?(\w+))?$/, async (id, flag) => {
       ${ev.detail ? `<p class="dim small">${esc(ev.detail)}</p>` : ''}
       ${ev.tip ? `<p>💡 ${esc(ev.tip)}</p>` : ''}
       ${res?.timingOffset && Math.abs(res.timingOffset) >= 0.06 ? `<p class="small dim">Your timing looked ${Math.round(Math.abs(res.timingOffset) * 1000)} ms ${res.timingOffset > 0 ? 'late' : 'early'}. <button data-latency="${Math.round(res.timingOffset * 1000)}">Adjust for this device</button></p>` : ''}
-      ${res?.take ? `<p><audio controls src="${URL.createObjectURL(res.take)}"></audio></p>` : ''}
+      ${take && take.size > 2000 ? `<div class="listenback"><b class="small">🎧 Hear yourself back</b> <span class="dim small">${s.recordTakes ? 'saved to Progress' : 'not saved; turn on “Record my takes” in Settings to keep takes'}</span><audio controls playsinline src="${URL.createObjectURL(take)}"></audio></div>` : ''}
       <div class="row"><button id="again">Try again</button>
         ${daily ? '<a class="btn primary" href="#/lessons">Back to lessons</a>' : ev.passed && nextOpen ? `<a class="btn primary" href="#/lesson/${next.id}">Next: ${next.id} ${esc(next.title)}</a>` : ''}
         ${!ev.passed && !daily ? '<a class="btn" href="#/lessons">Back to lessons</a>' : ''}</div>
@@ -460,6 +477,44 @@ route(/^\/lesson\/(\d\.\d)(?:\?(\w+))?$/, async (id, flag) => {
   const start = () => runLesson(judged, s, ex, report, offs, daily).catch(e => toast(e.message, 6000));
   start();
 }, 'lessons');
+
+// ---------------------------------------------------------------- how to make the sound, and how it works
+function howHTML(id, closed) {
+  const steps = (typeof LESSON_HOW !== 'undefined' && LESSON_HOW[id]) || [];
+  if (!steps.length) return '';
+  return `<details class="card how"${closed ? '' : ' open'}><summary><b>How to make the sound</b></summary>
+    <ol>${steps.map(t => `<li>${esc(t)}</li>`).join('')}</ol></details>`;
+}
+function learnHTML(unit, inLesson) {
+  const blocks = (typeof UNIT_LEARN !== 'undefined' && UNIT_LEARN[unit]) || [];
+  if (!blocks.length) return '';
+  const body = blocks.map(b => b.h ? `<h3>${esc(b.h)}</h3>`
+    : b.p ? `<p>${esc(b.p)}</p>`
+    : b.list ? `<ul>${b.list.map(x => `<li>${esc(x)}</li>`).join('')}</ul>`
+    : b.table ? `<div class="tablewrap"><table><tr>${b.table.head.map(h => `<th>${esc(h)}</th>`).join('')}</tr>${b.table.rows.map(r => `<tr>${r.map(c => `<td>${esc(c)}</td>`).join('')}</tr>`).join('')}</table></div>` : '').join('');
+  return `<details class="card learn"><summary><b>How it works</b>${inLesson ? ` <span class="dim small">Unit ${unit}</span>` : ''}</summary>${body}</details>`;
+}
+
+// Front camera as a mirror, pinned to the corner so it stays in view while singing.
+let mirrorStream = null;
+function stopMirror() {
+  mirrorStream?.getTracks().forEach(t => t.stop()); mirrorStream = null;
+  $('#mirrorbox')?.remove();
+  const b = $('#mirror'); if (b) b.classList.remove('primary');
+}
+async function toggleMirror(offs) {
+  if (mirrorStream) return stopMirror();
+  try {
+    mirrorStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 480 } }, audio: false });
+  } catch (e) { return toast('Couldn’t open the camera: ' + e.message, 5000); }
+  const box = document.createElement('div'); box.id = 'mirrorbox';
+  box.innerHTML = '<video autoplay muted playsinline></video><button aria-label="Close mirror">✕</button>';
+  box.querySelector('video').srcObject = mirrorStream;
+  box.querySelector('button').onclick = stopMirror;
+  document.body.appendChild(box);
+  $('#mirror').classList.add('primary');
+  if (!offs.includes(stopMirror)) offs.push(stopMirror);
+}
 
 // ---------------------------------------------------------------- demonstration videos
 // A thumbnail and title per video; the YouTube player only loads when tapped.
@@ -599,7 +654,7 @@ function glideStep(p, s, box) {
     const count = passSpec.smooth ? a.smoothCount : a.count;
     const passed = count >= p.count;
     const detail = `${count} glide${count === 1 ? '' : 's'} covering ${a.need}+ semitones${a.flip ? ` · your voice changed gear around ${noteName(a.flip)}` : ''}`;
-    return { res: null, P: null, extra: { passed, detail } };
+    return { res: null, P: null, extra: { passed, detail, take: r.res?.take } };
   });
 }
 

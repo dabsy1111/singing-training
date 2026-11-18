@@ -335,7 +335,7 @@ class Practice {
     this.playing = true;
     this.unsub = onPitch(f => this.onFrame(f));
     this.recorder = null;
-    if (s.recordTakes && window.MediaRecorder && A.stream) {
+    if ((s.recordTakes || this.opts.record) && window.MediaRecorder && A.stream) {
       try {
         this.chunks = [];
         this.recorder = new MediaRecorder(A.stream);
