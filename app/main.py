@@ -7,7 +7,7 @@ import shutil
 import uuid
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from . import auth, db, lyrics, pipeline
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+log = logging.getLogger("main")
 
 DATA_DIR = pipeline.DATA_DIR
 TAKES_DIR = DATA_DIR / "takes"
@@ -162,7 +163,7 @@ def songs():
                 r["best_shift"], r["fit"] = best_octave(notes, st["rangeLow"], st["rangeHigh"])
             v = _analysis_version(r["id"])
             has_src = (pipeline.song_dir(r["id"]) / "source.wav").exists()
-            r["outdated"] = bool(v and v < pipeline.ANALYSIS_VERSION and has_src)
+            r["outdated"] = bool(v and v < pipeline.ANALYSIS_VERSION and (has_src or pipeline.can_renote(pipeline.song_dir(r["id"]))))
             # analysed before backing vocals were kept as their own stem
             r["no_backing"] = bool(not r["outdated"] and has_src and _no_backing(r["id"]))
     return rows
@@ -235,7 +236,8 @@ def _reanalyse(song_id):
         raise HTTPException(404, "No such song")
     if s["status"] in ("queued", "processing"):
         raise HTTPException(409, "It's already waiting or being processed")
-    if not (pipeline.song_dir(song_id) / "source.wav").exists():
+    d = pipeline.song_dir(song_id)
+    if not (d / "source.wav").exists() and not pipeline.can_renote(d):
         raise HTTPException(400, "The original audio is gone; delete this song and add it again")
     db.update_song(song_id, status="queued", stage="Waiting in queue", error=None)
     pipeline.enqueue(song_id, {"reanalyse": True})
@@ -283,9 +285,18 @@ def delete_song(song_id: str):
 
 @app.get("/api/songs/{song_id}/analysis")
 def analysis(song_id: str):
-    p = pipeline.song_dir(song_id) / "analysis.json"
+    d = pipeline.song_dir(song_id)
+    p = d / "analysis.json"
     if not p.exists():
         raise HTTPException(404, "Not analysed yet")
+    if (d / "vocals.mp3").exists() and b'"loud"' not in p.read_bytes():
+        # songs analysed before the loudness line: work it out from the guide vocal once
+        try:
+            an = json.loads(p.read_text())
+            an["loud"], an["loud_hop"] = pipeline.loudness_for_file(d / "vocals.mp3"), pipeline.LOUD_HOP_S
+            p.write_text(json.dumps(an, separators=(",", ":")))
+        except Exception:  # noqa: BLE001 - the song still works without it
+            log.exception("loudness for %s failed", song_id)
     return FileResponse(p, media_type="application/json")
 
 
@@ -559,6 +570,19 @@ def put_course(value: dict):
     if len(json.dumps(value)) > 200_000:
         raise HTTPException(413, "Course data too large")
     return db.put_kv("course", value)
+
+
+@app.get("/api/vrp")
+def get_vrp():
+    """Saved voice range profiles (softest and loudest level per note), newest last."""
+    return db.get_kv("vrp", [])
+
+
+@app.put("/api/vrp")
+def put_vrp(value: list = Body(...)):
+    if len(json.dumps(value)) > 300_000:
+        raise HTTPException(413, "Too many saved profiles")
+    return db.put_kv("vrp", value)
 
 
 @app.get("/api/health")

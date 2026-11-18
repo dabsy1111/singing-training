@@ -6,7 +6,7 @@ A self-hosted singing trainer modelled on vocalify.me, with one big addition: pa
 
 - **Lessons.** A 47-lesson course in 8 units for total beginners: posture and breath, matching pitch, clean starts and steady notes, moving between notes, crossing the break, tone and tension, learning songs, then harmony and agility. Each lesson has a short why, on-screen cues, a scored exercise pitched to your range, and one targeted tip when you miss (flat, sharp, late starts, wobble, drooping ends). The next lesson unlocks at 70%. A placement check can start experienced singers at Unit 4 or 7, a 3-minute daily warm-up opens each session, and the app suggests a rest day when your scores dip or you've sung a lot. Lesson text and pass marks live in `app/static/lessons.js`.
 
-- **Songs from YouTube or files.** yt-dlp downloads the audio, Demucs (`htdemucs`) splits vocals from accompaniment, UVR-MDX-NET Karaoke 2 separates the lead singer from backing vocals (which go back into the music), and SwiftF0 tracks the lead vocal's pitch and turns it into notes. The recording's tuning is measured, so songs that aren't at A440 still grade fairly.
+- **Songs from YouTube or files.** yt-dlp downloads the audio, Demucs (`htdemucs`) splits vocals from accompaniment, UVR-MDX-NET Karaoke 2 separates the lead singer from backing vocals (which go back into the music), SwiftF0 tracks the lead vocal's pitch, and GAME (OpenVPI's singing-to-notes model) splits the melody into notes, one per sung syllable. The recording's tuning is measured, so songs that aren't at A440 still grade fairly.
 - **Live pitch feedback.** Your voice is drawn over the target notes, 100 times a second, coloured green / amber / red by how many cents you're off. The HUD says "aim higher" or "aim lower". A mic filter (Settings: Off / Light / Normal / Strong) keeps breaths, clicks, mic bumps and voiced exhales off the line: a sound has to be clearly pitched, louder than the room, not far quieter than your singing, and last long enough to be a sung note. It draws about 60 ms behind your voice to make that call; scoring isn't affected because every frame keeps its own timestamp.
 - **Practice controls.** Pick a section (or set it from the playhead), loop it, mix the accompaniment and guide vocal, and drag the track to move around.
 - **Sing it your way.** Each song has a part picker and key controls, remembered per song:
@@ -21,6 +21,8 @@ A self-hosted singing trainer modelled on vocalify.me, with one big addition: pa
 - **Lyrics.** A panel under the notes follows the song, highlighting the current line (and word, for transcribed songs). Tap a line to jump there, nudge the timing with − and +, or edit the words. The automatic lookup reads "Artist - Song", "Song - Artist", "Artist | Song" and titles with only the song name (using the channel name), and gives up rather than show another band's song. If it misses, ↻ lists the LRCLIB versions to choose from, and ⏱ syncs them: play the song and tap **Now** as a line starts.
 - **Warm-ups.** Five-note scale, arpeggio, thirds, octave leap, long tone, minor and nine-note scales, plus chained series. Each climbs through your range semitone by semitone and back down.
 - **Range test and tuner.** Hold your lowest and highest comfortable notes to set your range.
+- **Voice range profile** (Range page). Sing each note as softly and as loudly as you can; a bar per note shows the span between your softest and loudest. Save profiles and compare them later (same mic, same distance), or set your range from it. Levels are in dB of the mic's full scale, not calibrated dB SPL. Idea from Hideki Kawahara's voiceRTFB.
+- **Loudness line.** A band under the notes shows the singer's loudness from the recording (grey) and yours (blue), each against its own loud passages, so you can match swells and fades. "Show loudness" on the song page turns it off.
 - **Ear training.** Higher or lower, name the interval, sing it back. Misses are logged so weak intervals show up.
 - **Progress.** Score history, an accuracy heatmap by note, ear-training stats, and recorded takes you can play back.
 
@@ -48,7 +50,7 @@ Then open:
 
 **Updating:** press **Update** on the stack in Dockge. It pulls the newest image and restarts. Your songs, takes, history and settings live in the stack's `data/` folder and aren't touched.
 
-Optional settings for the `.env` box (defaults shown): `VL_HTTPS_PORT=8443` and `VL_TUNNEL_PORT=18095` (change either if the port is taken), `MAX_SONG_MINUTES=12`, `PITCH_MODEL=swiftf0`, `LEAD_SPLIT=1`, `CREPE_MODEL=tiny`, `DEMUCS_MODEL=htdemucs`, `PROCESS_THREADS=5`, `YTDLP_AUTO_UPDATE=1`.
+Optional settings for the `.env` box (defaults shown): `VL_HTTPS_PORT=8443` and `VL_TUNNEL_PORT=18095` (change either if the port is taken), `MAX_SONG_MINUTES=12`, `PITCH_MODEL=swiftf0`, `NOTE_MODEL=game` (or `contour` for the old notes from the pitch line), `LEAD_SPLIT=1`, `CREPE_MODEL=tiny`, `DEMUCS_MODEL=htdemucs`, `PROCESS_THREADS=5`, `YTDLP_AUTO_UPDATE=1`.
 
 ### Without Dockge
 

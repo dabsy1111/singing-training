@@ -32,7 +32,7 @@ function createMicFilter(level, rangeLow, rangeHigh) {
 
   if (!cfg) {
     // Off: emit straight away, voiced if clear enough.
-    return { delay: 0, push: f => [{ ...f, hz: f.hz > 0 && f.clarity > 0.8 ? f.hz : 0 }] };
+    return { delay: 0, push: f => [{ ...f, hz: f.hz > 0 && f.clarity > 0.8 && f.rms >= 0.004 ? f.hz : 0 }] };
   }
 
   // An octave of slack each side of the saved range (never narrower than C3–C5 plus that

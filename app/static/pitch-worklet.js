@@ -47,7 +47,9 @@ class PitchProcessor extends AudioWorkletProcessor {
     let energy = 0;
     for (let i = 0; i < W; i++) energy += x[i] * x[i];
     const rms = Math.sqrt(energy / W);
-    if (rms < 0.004) return { hz: 0, clarity: 0, rms };
+    // -60 dB: quiet enough for the voice range profile's softest notes. The mic filter still
+    // ignores anything under 0.004 (-48 dB) for everything else.
+    if (rms < 0.001) return { hz: 0, clarity: 0, rms };
     const N = W - this.maxLag;
     // difference function
     for (let tau = 1; tau <= this.maxLag; tau++) {

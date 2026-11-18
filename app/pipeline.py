@@ -35,7 +35,9 @@ PITCH_MODEL = os.environ.get("PITCH_MODEL", "swiftf0")   # swiftf0 | crepe (CREP
 CREPE_MODEL = os.environ.get("CREPE_MODEL", "tiny")       # tiny (fast) | full (~15x slower on CPU)
 LEAD_SPLIT = os.environ.get("LEAD_SPLIT", "1") == "1"     # split lead from backing vocals
 KARAOKE_MODEL = Path(os.environ.get("KARAOKE_MODEL", "/models/UVR_MDXNET_KARA_2.onnx"))
-ANALYSIS_VERSION = 2   # bump when re-analysing would give a better melody
+NOTE_MODEL = os.environ.get("NOTE_MODEL", "game")          # game (GAME note model) | contour (notes from the pitch line)
+GAME_MODEL = Path(os.environ.get("GAME_MODEL", "/models/GAME-1.0.3-small-onnx"))
+ANALYSIS_VERSION = 3   # 3: GAME notes + loudness curve. bump when re-analysing would give a better melody
 DEMUCS_MODEL = os.environ.get("DEMUCS_MODEL", "htdemucs")  # htdemucs | htdemucs_ft | mdx_extra
 THREADS = int(os.environ.get("PROCESS_THREADS", str(os.cpu_count() or 4)))
 PLAYBACK_RATE = 32000   # matches the AudioContext rate the browser uses
@@ -92,6 +94,8 @@ def process(song_id: str, job: dict):
     d = song_dir(song_id)
     d.mkdir(parents=True, exist_ok=True)
     src = d / "source.wav"
+    if job.get("reanalyse") and can_renote(d):
+        return renote(song_id, d)
 
     if not src.exists():
         if job.get("url"):
@@ -178,6 +182,33 @@ def process(song_id: str, job: dict):
         except Exception as e:  # noqa: BLE001 - lyrics are optional; the song works without them
             log.info("no lyrics for %s: %s", song_id, e)
 
+    lo, hi = analysis.get("range") or (None, None)
+    db.update_song(song_id, status="ready", stage=None, error=None, note_low=lo, note_high=hi)
+
+
+def can_renote(d: Path) -> bool:
+    """Songs from analysis v2 already have the lead vocal split out (vocals.mp3), so moving
+    them to v3 (GAME notes, loudness) only needs the melody step again, not Demucs."""
+    p = d / "analysis.json"
+    if not (p.exists() and (d / "vocals.mp3").exists()):
+        return False
+    try:
+        an = json.loads(p.read_text())
+    except ValueError:
+        return False
+    return an.get("v", 1) >= 2 and bool(an.get("lead_split")) and bool(an.get("backing"))
+
+
+def renote(song_id: str, d: Path):
+    old = json.loads((d / "analysis.json").read_text())
+    stage(song_id, "Finding the vocal melody")
+    analysis = analyse_vocals(d / "vocals.mp3")
+    for k in ("duration", "lead_split", "backing", "key"):
+        if k in old:
+            analysis[k] = old[k]
+    analysis["v"] = ANALYSIS_VERSION
+    analysis["pitch_model"] = PITCH_MODEL
+    (d / "analysis.json").write_text(json.dumps(analysis, separators=(",", ":")))
     lo, hi = analysis.get("range") or (None, None)
     db.update_song(song_id, status="ready", stage=None, error=None, note_low=lo, note_high=hi)
 
@@ -390,7 +421,26 @@ def analyse_vocals(vocals: Path) -> dict:
     tuning = 0.0
     if len(v) > 200:
         tuning = float(np.angle(np.mean(np.exp(2j * np.pi * (v % 1)))) / (2 * np.pi))  # semitones, -0.5..0.5
-    notes = segment_notes(midi - tuning)
+    note_model = "contour"
+    notes = None
+    if NOTE_MODEL == "game" and (GAME_MODEL / "encoder.onnx").exists():
+        try:
+            notes = game_notes(vocals, gate, rms_db, tuning)
+            note_model = "game"
+        except Exception:  # noqa: BLE001 - fall back to the pitch-line notes
+            log.exception("GAME note model failed; using notes from the pitch line")
+    elif NOTE_MODEL == "game":
+        log.warning("GAME model not found at %s; using notes from the pitch line", GAME_MODEL)
+    fallback = segment_notes(midi - tuning)
+    if notes is not None:
+        # GAME very occasionally hears nothing in a quiet or breathy vocal the pitch tracker
+        # follows fine (1 of 42 test clips); then the pitch-line notes are the better bet.
+        dur = lambda ns: sum(n["t1"] - n["t0"] for n in ns)  # noqa: E731
+        if dur(notes) < 0.3 * dur(fallback):
+            log.info("GAME found little (%.1f s of notes vs %.1f s); using the pitch-line notes", dur(notes), dur(fallback))
+            notes, note_model = None, "contour"
+    if notes is None:
+        notes = fallback
     contour = [None if np.isnan(v) else round(float(v), 2) for v in midi]
     if notes:
         pitches = np.array([nt["midi"] for nt in notes])
@@ -401,7 +451,64 @@ def analyse_vocals(vocals: Path) -> dict:
     else:
         rng = None
     # notes are in the song's tuning: the true pitch of a note is midi + tuning/100
-    return {"hop": HOP_S, "contour": contour, "notes": notes, "range": rng, "tuning": round(tuning * 100, 1)}
+    return {"hop": HOP_S, "contour": contour, "notes": notes, "range": rng, "tuning": round(tuning * 100, 1),
+            "loud": loudness_curve(rms_db, gate), "loud_hop": LOUD_HOP_S, "note_model": note_model}
+
+
+LOUD_HOP_S = 0.05   # the singer's loudness, 20 values a second
+LOUD_SPAN_DB = 36   # 0 = this far below the singer's loud parts, 100 = their loud parts
+
+
+def loudness_curve(rms_db: np.ndarray, gate: np.ndarray) -> list[int]:
+    """How loud the lead singer is over time, 0-100 relative to their own loud passages
+    (98th percentile), 0 where they're silent. Drawn under the melody so you can match the
+    swells and fades, not only the notes."""
+    k = int(round(LOUD_HOP_S / HOP_S))
+    n = len(rms_db) // k
+    if not n or not gate.any():
+        return []
+    ref = float(np.percentile(rms_db[gate], 98))
+    db = rms_db[: n * k].reshape(n, k).mean(axis=1)
+    on = gate[: n * k].reshape(n, k).mean(axis=1) >= 0.5
+    v = np.clip((db - (ref - LOUD_SPAN_DB)) / LOUD_SPAN_DB * 100, 0, 100)
+    v[~on] = 0
+    return [int(round(x)) for x in v]
+
+
+def loudness_for_file(p: Path) -> list[int]:
+    """The loudness curve from a song's guide vocal mp3, for songs analysed before it existed."""
+    import librosa
+
+    sr = 16000
+    hop = int(sr * HOP_S)
+    audio, _ = librosa.load(str(p), sr=sr, mono=True)
+    rms = librosa.feature.rms(y=audio, frame_length=1024, hop_length=hop, center=True)[0]
+    rms_db = 20 * np.log10(rms + 1e-9)
+    return loudness_curve(rms_db, rms_db > (np.percentile(rms_db, 95) - 30))
+
+
+_game = None
+
+
+def game_notes(vocals: Path, gate: np.ndarray, rms_db: np.ndarray, tuning: float) -> list[dict]:
+    """Notes from GAME (MIT, github.com/openvpi/GAME): one note per sung syllable, found by a
+    model trained on singing rather than by thresholds on the pitch line."""
+    global _game
+    import librosa
+    from .game import Game, phrases_from_gate
+
+    if _game is None:
+        _game = Game(GAME_MODEL, threads=THREADS)
+    wav, _ = librosa.load(str(vocals), sr=_game.sr, mono=True)
+    peak = float(np.abs(wav).max()) or 1.0
+    wav = (wav * (0.9 / peak)).astype(np.float32)   # separated vocals can be quiet; GAME was trained on normal levels
+    phrases = phrases_from_gate(gate, HOP_S, _game.sr, rms_db)
+    notes = []
+    for t0, t1, m in _game.transcribe(wav, phrases):
+        if t1 - t0 < 0.05:
+            continue
+        notes.append({"t0": round(t0, 3), "t1": round(t1, 3), "midi": int(round(m - tuning))})
+    return notes
 
 
 def _swiftf0(audio, sr, n_frames):

@@ -38,7 +38,7 @@ async function settings() { return SETTINGS || (SETTINGS = await api('/api/setti
 async function saveSettings(patch) { SETTINGS = await api('/api/settings', { method: 'PUT', json: patch }); return SETTINGS; }
 
 // ---------------------------------------------------------------- audio
-const A = { ctx: null, ready: null, stream: null, node: null, listeners: new Set(), gate: null, smooth: null };
+const A = { ctx: null, ready: null, stream: null, node: null, listeners: new Set(), raw: new Set(), gate: null, smooth: null };
 const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
 // Safari 16.4+: tell iOS we play and record at once, so audio isn't muted by the
@@ -111,6 +111,7 @@ async function startMic() {
   src.connect(A.node); A.node.connect(sink); sink.connect(ctx.destination);
   A.gate = createJumpGate(); A.smooth = null; A.filter = null;
   A.node.port.onmessage = e => {
+    A.raw.forEach(fn => fn(e.data));   // unfiltered frames (the voice range profile does its own checks)
     // the mic filter (mic-filter.js) drops breaths, clicks and bumps; rebuilt if its settings change
     const st = SETTINGS || {};
     const key = `${st.micFilter ?? 2}/${st.rangeLow}/${st.rangeHigh}`;
@@ -130,12 +131,15 @@ async function startMic() {
 
 function stopMic() {
   A.stream?.getTracks().forEach(t => t.stop());
-  A.node?.disconnect();
-  A.stream = null; A.node = null; A.listeners.clear();
+  // Detach the old detector too: a disconnected worklet keeps running and posting silent frames,
+  // which interleaved with the next page's frames and broke runs of steady pitch.
+  if (A.node) { A.node.port.onmessage = null; A.node.port.close(); A.node.disconnect(); }
+  A.stream = null; A.node = null; A.listeners.clear(); A.raw.clear();
   setAudioSession('auto');
 }
 
 function onPitch(fn) { A.listeners.add(fn); return () => A.listeners.delete(fn); }
+function onRawPitch(fn) { A.raw.add(fn); return () => A.raw.delete(fn); }
 
 // Delay between "sound leaves the speaker" and "pitch frame arrives", in seconds.
 // Safari doesn't report output latency, so on iPhone this is mostly the per-device setting.
@@ -478,6 +482,8 @@ class Practice {
     this.latency = autoLatency() + deviceLatencyMs() / 1000;
     for (const n of this.notes) if (n.t1 > from && n.t0 < to) { n.frames = []; n.result = null; }
     this.trail = [];
+    // Your loudness is shown against your own loud singing on this device (remembered between runs).
+    this.loudPeak = loudRef(); this.loudSung = []; this._ld = null;
     const lead = 0.15;
     this.startCtx = ctx.currentTime + lead; this.startPos = from;
     this.master = ctx.createGain(); this.master.connect(ctx.destination);
@@ -541,7 +547,11 @@ class Practice {
     if (n && t >= this.section.from) n.frames.push({ dt: t - n.t0, c, rms: f.rms });
     let show = f.midi;
     if (show !== null && s.octaveFree && n) show = n.midi + this.tune + c / 100;   // draw in the target's octave
-    this.trail.push({ t, midi: f.midi, show, c, onNote: !!n, rms: f.rms });
+    // loudness in dB (mic full scale), lightly smoothed; drawn in the band under the melody
+    const db = f.rms > 1e-4 ? 20 * Math.log10(f.rms) : null;
+    this._ld = db === null ? null : this._ld == null ? db : this._ld * 0.6 + db * 0.4;
+    if (this._ld !== null && f.midi !== null) { this.loudPeak = Math.max(this.loudPeak, this._ld); this.loudSung.push(this._ld); }
+    this.trail.push({ t, midi: f.midi, show, c, onNote: !!n, rms: f.rms, ld: this._ld });
     this.opts.onFrame?.(f, t, n, c);
     this.current = { midi: f.midi, c, n };
     // grade notes that have finished
@@ -572,6 +582,10 @@ class Practice {
     const score = totalDur ? 100 * graded.reduce((a, n) => a + n.result.score * (n.t1 - n.t0), 0) / totalDur : null;
     const biases = graded.map(n => n.result.bias).filter(b => b !== null);
     const bias = biases.length ? biases.reduce((a, b) => a + b, 0) / biases.length : null;
+    if (this.loudSung?.length > 300) {   // 3 s of singing: remember how loud "loud" is on this mic
+      const v = [...this.loudSung].sort((a, b) => a - b)[Math.floor(this.loudSung.length * 0.98)];
+      try { localStorage.setItem('vl-loud-peak', v.toFixed(1)); } catch { /* ignore */ }
+    }
     const off = this.trail.length > 100 ? bestOffset(this.notes, this.trail, s, this.tune) : { off: 0 };
     return {
       finished, score, take, bias, timingOffset: off.off / this.rate,   // real seconds, for the device setting
@@ -596,10 +610,13 @@ class Practice {
     const now = this.now(), px = W * 0.3;
     const t0 = now - px / pps, t1 = now + (W - px) / pps;
     const [lo, hi] = this.viewRange(now, t1);
-    const rows = hi - lo + 1, rowH = H / rows;
+    const LH = showLoudness() ? clamp(Math.round(H * 0.17), 30, 64) : 0;   // loudness band at the bottom
+    const PH = H - LH;
+    const rows = hi - lo + 1, rowH = PH / rows;
     const mLo = Math.floor(lo), mHi = Math.ceil(hi);
-    const y = m => H - (m - lo + 0.5) * rowH;
+    const y = m => PH - (m - lo + 0.5) * rowH;
     const x = t => px + (t - now) * pps;
+    g.save(); g.beginPath(); g.rect(0, 0, W, PH); g.clip();   // notes and lines stay above the loudness band
     // grid
     g.font = '11px system-ui'; g.textBaseline = 'middle';
     for (let m = mLo; m <= mHi; m++) {
@@ -652,6 +669,8 @@ class Practice {
       if (prev && p.t - prev.t < 0.05) { g.beginPath(); g.moveTo(prev.X, prev.Y); g.lineTo(X, Y); g.stroke(); }
       prev = { X, Y, t: p.t };
     }
+    g.restore();
+    if (LH) this.drawLoudness(g, x, t0, t1, PH, LH, W);
     // text marks from lessons ("think it…", "5th up", glide instructions)
     if (this.opts.marks?.length) {
       g.fillStyle = 'rgba(232,234,240,0.9)'; g.font = '600 13px system-ui'; g.textBaseline = 'top';
@@ -668,7 +687,7 @@ class Practice {
     g.fillStyle = 'rgba(255,255,255,0.5)'; g.fillRect(px, 0, 1, H);
     // left labels
     g.fillStyle = 'rgba(200,205,220,0.7)';
-    for (let m = mLo; m <= mHi; m++) if (rowH > 9 && (((m % 12) + 12) % 12 === 0 || rowH > 16) && ![1, 3, 6, 8, 10].includes(((m % 12) + 12) % 12)) g.fillText(noteName(m), 4, y(m));
+    for (let m = mLo; m <= mHi; m++) if (rowH > 9 && y(m) < PH - 5 && (((m % 12) + 12) % 12 === 0 || rowH > 16) && ![1, 3, 6, 8, 10].includes(((m % 12) + 12) % 12)) g.fillText(noteName(m), 4, y(m));
     // HUD
     const cur = this.playing ? this.current : null;
     if (cur && cur.midi !== null) {
@@ -676,6 +695,38 @@ class Practice {
       const word = c === null ? '' : Math.abs(c) <= s.greenCents ? 'on it' : c > 0 ? 'aim lower' : 'aim higher';
       this.hud.innerHTML = `<div class="big">${noteName(cur.midi)}</div><div class="dim small">${c === null ? '' : (c > 0 ? '+' : '') + Math.round(c) + '¢ · ' + word}</div>`;
     } else this.hud.innerHTML = `<div class="dim small">${fmtTime(Math.max(0, now))}</div>`;
+  }
+
+  // Loudness band: the singer's loudness from the song (grey, filled) and yours (line), each 0–1
+  // against its own loud passages over the bottom LH px. Shapes are what to compare: swells, fades,
+  // where the singer leans in. Not absolute levels: your mic and the recording aren't comparable.
+  drawLoudness(g, x, t0, t1, top, LH, W) {
+    const span = 36, pad = 3, base = top + LH - pad, h = LH - 2 * pad - 10;
+    g.fillStyle = 'rgba(0,0,0,0.22)'; g.fillRect(0, top, W, LH);
+    g.fillStyle = 'rgba(255,255,255,0.08)'; g.fillRect(0, top, W, 1);
+    g.fillStyle = 'rgba(200,205,220,0.55)'; g.font = '10px system-ui'; g.textBaseline = 'top';
+    g.fillText('loudness', 4, top + 2);
+    g.font = '11px system-ui'; g.textBaseline = 'middle';
+    const tg = this.target;
+    if (tg.loud?.length) {
+      const hop = tg.loud_hop || 0.05;
+      const i0 = Math.max(0, Math.floor(t0 / hop)), i1 = Math.min(tg.loud.length - 1, Math.ceil(t1 / hop));
+      g.fillStyle = 'rgba(160,170,200,0.28)'; g.beginPath(); g.moveTo(x(i0 * hop), base);
+      for (let i = i0; i <= i1; i++) g.lineTo(x(i * hop), base - h * tg.loud[i] / 100);
+      g.lineTo(x(i1 * hop), base); g.closePath(); g.fill();
+    }
+    const ref = this.loudPeak ?? loudRef();
+    g.strokeStyle = css('--accent'); g.lineWidth = 2; g.lineJoin = 'round';
+    let pen = false, last = -1;
+    g.beginPath();
+    for (const p of this.trail) {
+      if (p.t < t0 - 0.1 || p.ld == null) { pen = false; continue; }
+      const v = clamp((p.ld - (ref - span)) / span, 0, 1);
+      const X = x(p.t), Y = base - h * v;
+      if (v <= 0 || p.t - last > 0.05) pen = false;
+      pen ? g.lineTo(X, Y) : g.moveTo(X, Y); pen = v > 0; last = p.t;
+    }
+    g.stroke();
   }
 
   // The whole melody's range, padded: the most the view ever shows.
@@ -728,6 +779,11 @@ class Practice {
     return [lo, lo + rows - 1];
   }
 }
+
+// Loudness band on the melody view: on unless switched off (song page checkbox), per device.
+function showLoudness() { try { return localStorage.getItem('vl-showLoud') !== '0'; } catch { return true; } }
+// How loud your loud singing is on this mic, in dB full scale (98th percentile of your last run).
+function loudRef() { const v = parseFloat(localStorage.getItem('vl-loud-peak')); return Number.isFinite(v) ? v : -20; }
 
 function roundRect(g, x, y, w, h, r) {
   g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r);
@@ -972,7 +1028,7 @@ route(/^\/$/, async () => {
     const old = songs.filter(x => x.outdated && x.status === 'ready');
     $('#outdated').innerHTML = old.length ? `
       <div class="card row">
-        <span class="grow small">${old.length === 1 ? '1 song was' : `${old.length} songs were`} worked out with the older melody finder. The new one separates the lead singer from backing vocals and gets the tune right more often. Lyrics, scores and a key you set yourself are kept.</span>
+        <span class="grow small">${old.length === 1 ? '1 song was' : `${old.length} songs were`} worked out with an older melody finder. The new one splits the tune into one note per sung syllable and adds the singer's loudness line. Songs from the last few days only redo the melody (about a minute each); older ones are split again too. Lyrics, scores and a key you set yourself are kept.</span>
         <button data-reall>Re-analyse ${old.length === 1 ? 'it' : 'all'}</button>
       </div>` : '';
     const noBack = songs.filter(x => x.no_backing && x.status === 'ready');
@@ -1320,6 +1376,7 @@ route(/^\/song\/([0-9a-f]{12})(?:\?lesson=(\d\.\d))?$/, async (id, lessonId) => 
       <label>Guide vocal <input type="range" id="vVoc" min="0" max="1.2" step="0.05" value="0.3"></label>
       <label><input type="checkbox" id="octFree" ${s.octaveFree ? 'checked' : ''}> Any octave counts</label>
       <label><input type="checkbox" id="contour" checked> Show melody line</label>
+      <label><input type="checkbox" id="showLoud" ${showLoudness() ? 'checked' : ''}> Show loudness</label>
       <label><input type="checkbox" id="showLyr" ${songPref('all', 'lyrics', '1') === '1' ? 'checked' : ''}> Show lyrics</label>
     </div>
     <div class="legend small"><span><i style="background:var(--green)"></i>within ${s.greenCents}¢</span><span><i style="background:var(--amber)"></i>within ${s.amberCents}¢</span><span><i style="background:var(--red)"></i>off</span><span>Drag the track to move around when stopped. Headphones work best.</span></div>
@@ -1334,6 +1391,7 @@ route(/^\/song\/([0-9a-f]{12})(?:\?lesson=(\d\.\d))?$/, async (id, lessonId) => 
     settings: s, volumes: vols, sectionRef: sec, showContour: () => $('#contour').checked, start: firstIn,
   });
   cleanup = () => { P.destroy(); stopMic(); };
+  $('#showLoud').onchange = e => { try { localStorage.setItem('vl-showLoud', e.target.checked ? '1' : '0'); } catch { /* ignore */ } };
 
   // ---- the part you sing
   const octChoice = () => { const v = $('#oct').value; return v === 'auto' ? autoShift : Number(v); };
@@ -1591,6 +1649,15 @@ route(/^\/range$/, async () => {
       <span class="dim small" id="cap"></span></div>
       <div class="row" style="margin-top:10px"><span class="dim small">Or set it by hand:</span>
         <select id="selLo"></select><span>to</span><select id="selHi"></select><button id="saveSel">Save</button></div>
+    </div>
+    <div class="card" id="vrp">
+      <h2>Voice range profile</h2>
+      <p class="dim small">Maps how softly and how loudly you can sing each note. Hold notes or sing slow sirens on "ah": once as quietly as you can without the sound cutting out, once as loud as is comfortable (full, not shouting). The bars fill in as you go: the bottom of each bar is your softest, the top your loudest. Levels come from this microphone, so compare profiles made with the same mic at the same distance.</p>
+      <canvas id="vrpC" class="vrp"></canvas>
+      <div class="row" style="margin-top:8px"><button class="primary" id="vrpGo">Start</button><button id="vrpClear">Clear</button>
+        <button id="vrpSave" disabled>Save</button><button id="vrpRange" disabled>Use as my range</button></div>
+      <p class="dim small" id="vrpInfo"></p>
+      <div id="vrpList"></div>
     </div>`;
   const opts = m => Array.from({ length: 49 }, (_, i) => 36 + i).map(x => `<option value="${x}" ${x === m ? 'selected' : ''}>${noteName(x)}</option>`).join('');
   $('#selLo').innerHTML = opts(s.rangeLow); $('#selHi').innerHTML = opts(s.rangeHigh);
@@ -1634,8 +1701,140 @@ route(/^\/range$/, async () => {
     };
   };
   $('#low').onclick = cap('lowest'); $('#high').onclick = cap('highest');
+  off.push(await voiceRangeProfile(s));
   cleanup = () => { off.forEach(f => f()); stopMic(); };
 }, 'range');
+
+// ---- voice range profile
+/* For every semitone you sing: the softest and loudest level you held it at, in dB of the mic's full
+ * scale. A level counts once the pitch has sat on that semitone (±50 cents) for 150 ms with the
+ * level steady (within 6 dB), so note onsets and fades don't stretch the bars.
+ * Idea from Hideki Kawahara's voiceRTFB "Valued Voice Range Profiler" (Apache-2.0); a clinical
+ * phonetogram uses calibrated dB SPL at 30 cm, this one is relative to your microphone. */
+const VRP_MIN_FRAMES = 5;     // steady windows (≈50 ms) before a note shows
+async function voiceRangeProfile(s) {
+  let saved = [];
+  try { saved = await api('/api/vrp'); } catch { /* shown empty */ }
+  let cur = {}, rec = false, buf = [], live = null, compare = saved.length ? saved.length - 1 : -1, unsub = null;
+  const cv = $('#vrpC');
+  const micLabel = () => (A.stream?.getAudioTracks()[0]?.label || '').replace(/\s*\(.*\)$/, '').slice(0, 60);
+  const usable = bins => Object.entries(bins).filter(([, b]) => b[2] >= VRP_MIN_FRAMES).map(([m, b]) => [+m, b]);
+  const summary = bins => {
+    const u = usable(bins); if (!u.length) return '';
+    const ms = u.map(e => e[0]), lo = Math.min(...ms), hi = Math.max(...ms);
+    const wide = u.reduce((a, e) => e[1][1] - e[1][0] > a[1][1] - a[1][0] ? e : a);
+    const med = u.map(e => e[1][1] - e[1][0]).sort((a, b) => a - b)[Math.floor(u.length / 2)];
+    return `${noteName(lo)}–${noteName(hi)} · ${u.length} notes · soft-to-loud span ${Math.round(med)} dB on a typical note, widest ${Math.round(wide[1][1] - wide[1][0])} dB on ${noteName(wide[0])}`;
+  };
+  const short = bins => {
+    const u = usable(bins); if (!u.length) return '';
+    const ms = u.map(e => e[0]), med = u.map(e => e[1][1] - e[1][0]).sort((a, b) => a - b)[Math.floor(u.length / 2)];
+    return `${noteName(Math.min(...ms))}–${noteName(Math.max(...ms))}, ${Math.round(med)} dB`;
+  };
+  function draw() {
+    const dpr = window.devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight;
+    cv.width = W * dpr; cv.height = H * dpr;
+    const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+    const other = compare >= 0 && saved[compare] ? usable(saved[compare].bins) : [];
+    const mine = usable(cur);
+    const ms = [...mine, ...other].map(e => e[0]).concat([s.rangeLow, s.rangeHigh]);
+    if (live) ms.push(Math.round(live.m));
+    const mLo = Math.min(...ms) - 2, mHi = Math.max(...ms) + 2;
+    const dbs = [...mine, ...other].flatMap(e => [e[1][0], e[1][1]]).concat(live ? [live.db] : []);
+    const yTop = Math.min(0, Math.ceil((Math.max(-15, ...dbs) + 3) / 10) * 10);
+    const yBot = Math.floor((Math.min(-50, ...dbs) - 3) / 10) * 10;
+    const L = 40, B = 18, cw = (W - L - 4) / (mHi - mLo + 1);
+    const x = m => L + (m - mLo) * cw, y = d => (H - B) * (yTop - d) / (yTop - yBot);
+    g.font = '10px system-ui'; g.textBaseline = 'middle'; g.fillStyle = 'rgba(200,205,220,0.6)';
+    for (let d = yTop; d >= yBot; d -= 10) {
+      g.fillStyle = 'rgba(255,255,255,0.06)'; g.fillRect(L, y(d), W - L, 1);
+      g.fillStyle = 'rgba(200,205,220,0.6)'; g.fillText(`${d} dB`, 2, y(d));
+    }
+    g.textBaseline = 'top';
+    for (let m = Math.ceil(mLo); m <= mHi; m++) {
+      const pc = ((m % 12) + 12) % 12;
+      if (pc === 0 || (cw > 22 && ![1, 3, 6, 8, 10].includes(pc))) {
+        g.fillStyle = pc === 0 ? 'rgba(200,205,220,0.8)' : 'rgba(200,205,220,0.45)'; g.fillText(noteName(m), x(m), H - B + 4);
+      }
+    }
+    // your saved range, faintly
+    g.fillStyle = 'rgba(122,162,255,0.06)'; g.fillRect(x(s.rangeLow), 0, x(s.rangeHigh + 1) - x(s.rangeLow), H - B);
+    g.strokeStyle = 'rgba(200,205,220,0.55)'; g.lineWidth = 1; g.setLineDash([3, 3]);
+    for (const [m, b] of other) g.strokeRect(x(m) + 1.5, y(b[1]), cw - 3, Math.max(2, y(b[0]) - y(b[1])));
+    g.setLineDash([]);
+    g.fillStyle = css('--accent');
+    for (const [m, b] of mine) { g.globalAlpha = 0.75; g.fillRect(x(m) + 3, y(b[1]), cw - 6, Math.max(2, y(b[0]) - y(b[1]))); }
+    g.globalAlpha = 1;
+    if (live) { g.fillStyle = '#fff'; g.beginPath(); g.arc(x(live.m) + cw / 2, y(live.db), 4, 0, 7); g.fill(); }
+  }
+  function info() {
+    const t = summary(cur);
+    const cmp = compare >= 0 && saved[compare] ? `Dashed: saved ${new Date(saved[compare].at).toLocaleDateString()}${saved[compare].mic ? ` (${esc(saved[compare].mic)})` : ''}.` : '';
+    $('#vrpInfo').innerHTML = (t ? esc(t) + '. ' : rec ? 'Listening… ' : '') + cmp;
+    $('#vrpSave').disabled = $('#vrpRange').disabled = usable(cur).length < 3;
+  }
+  function list() {
+    $('#vrpList').innerHTML = saved.length ? `<p class="dim small" style="margin-bottom:4px">Saved profiles</p>` + saved.map((p, i) => `
+      <div class="row small" style="margin:4px 0"><span class="grow">${new Date(p.at).toLocaleDateString()} · ${esc(short(p.bins))}${p.mic ? ` · <span class="dim">${esc(p.mic)}</span>` : ''}</span>
+        <button data-cmp="${i}" ${i === compare ? 'class="on"' : ''}>${i === compare ? 'Comparing' : 'Compare'}</button><button data-del="${i}" aria-label="Delete">✕</button></div>`).reverse().join('') : '';
+    $('#vrpList').querySelectorAll('[data-cmp]').forEach(b => b.onclick = () => { compare = +b.dataset.cmp === compare ? -1 : +b.dataset.cmp; list(); info(); draw(); });
+    $('#vrpList').querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
+      if (!confirm('Delete this saved profile?')) return;
+      saved.splice(+b.dataset.del, 1); compare = Math.min(compare, saved.length - 1);
+      try { await api('/api/vrp', { method: 'PUT', json: saved }); } catch (e) { toast(e.message); }
+      list(); info(); draw();
+    });
+  }
+  // Raw detector frames, not the mic filter's: that drops anything 20 dB under your recent loud
+  // singing (it's tuned to keep breaths off the pitch line), which would cut off the soft end here.
+  function onFrame(f) {
+    if (!(f.hz > 55 && f.hz < 1400 && f.clarity >= 0.85 && f.rms > 0.001)) { buf = []; live = null; return; }
+    const m = hzToMidi(f.hz), db = 20 * Math.log10(f.rms);
+    live = { m: Math.round(m), db };
+    buf.push({ m, db }); if (buf.length > 15) buf.shift();
+    if (buf.length < 15) return;
+    const n = Math.round(buf[0].m);
+    if (!buf.every(b => Math.abs(b.m - n) <= 0.5)) return;
+    const d = buf.map(b => b.db), spread = Math.max(...d) - Math.min(...d);
+    if (spread > 6) return;
+    const v = d.reduce((a, b) => a + b) / d.length;
+    const b = cur[n] || (cur[n] = [v, v, 0]);
+    b[0] = Math.min(b[0], v); b[1] = Math.max(b[1], v); b[2]++;
+  }
+  let raf = null, lastInfo = 0;
+  const loop = t => { raf = requestAnimationFrame(loop); draw(); if (t - lastInfo > 500) { lastInfo = t; info(); } };
+  $('#vrpGo').onclick = async () => {
+    if (rec) {
+      rec = false; unsub?.(); unsub = null; live = null; cancelAnimationFrame(raf); draw(); info();
+      $('#vrpGo').textContent = 'Start'; return;
+    }
+    try { await startMic(); } catch (e) { return toast(e.message, 6000); }
+    rec = true; unsub = onRawPitch(onFrame); raf = requestAnimationFrame(loop);
+    $('#vrpGo').textContent = 'Stop';
+  };
+  $('#vrpClear').onclick = () => { cur = {}; draw(); info(); };
+  $('#vrpSave').onclick = async () => {
+    const bins = Object.fromEntries(usable(cur).map(([m, b]) => [m, [+b[0].toFixed(1), +b[1].toFixed(1), b[2]]]));
+    saved.push({ at: Date.now(), mic: micLabel(), bins });
+    if (saved.length > 30) saved.shift();
+    try { await api('/api/vrp', { method: 'PUT', json: saved }); toast('Saved'); }
+    catch (e) { saved.pop(); return toast(e.message); }
+    compare = saved.length - 1; list(); info(); draw();
+  };
+  $('#vrpRange').onclick = async () => {
+    // notes held for at least half a second in total, so a passing crack doesn't set the range
+    const ms = usable(cur).filter(e => e[1][2] >= 50).map(e => e[0]);
+    if (ms.length < 2) return toast('Hold your lowest and highest notes a little longer first');
+    const lo = Math.min(...ms), hi = Math.max(...ms);
+    if (hi - lo < 5) return toast('That covers less than a fourth. Sing further up and down first.');
+    await saveSettings({ rangeLow: lo, rangeHigh: hi }); markRangeSaved();
+    s.rangeLow = lo; s.rangeHigh = hi;
+    $('#saved').textContent = `${noteName(lo)} – ${noteName(hi)}`; toast(`Range set to ${noteName(lo)} – ${noteName(hi)}`); draw();
+  };
+  const ro = new ResizeObserver(() => draw()); ro.observe(cv);
+  list(); info(); draw();
+  return () => { unsub?.(); cancelAnimationFrame(raf); ro.disconnect(); };
+}
 
 // ---- ear training
 const INTERVALS = ['Unison', 'm2', 'M2', 'm3', 'M3', 'P4', 'Tritone', 'P5', 'm6', 'M6', 'm7', 'M7', 'Octave'];
