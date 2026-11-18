@@ -49,6 +49,8 @@ DEFAULT_SETTINGS = {
     "recordTakes": True,
     "pxPerSecond": 140,
     "micFilter": 2,          # 0 off, 1 light, 2 normal, 3 strong (see static/mic-filter.js)
+    "refSound": "voice",     # reference notes in lessons and warm-ups: "voice" (sung) or "tone"
+    "voiceType": "auto",     # "auto" (from your range), "low" or "high"
 }
 
 
