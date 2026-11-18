@@ -199,6 +199,9 @@ function parseSyllable(label) {
   if (/^(hum|mmm|m+$)|^ng\b|\bng$/.test(t) || t === 'hum') return { ...out, closed: true };
   if (/soft/.test(t)) out.vol = 0.55; else if (/loud/.test(t)) out.vol = 1.35;
   const w = t.replace(/[^a-z ]/g, ' ').trim().split(/\s+/)[0] || '';
+  // whole words whose vowel the spelling rules below get wrong (warm-up lyrics and solfège)
+  const WORD = { i: ['', 'a'], sol: ['', 'o'], to: ['stop', 'u'], sing: ['', 'i'], me: ['m', 'i'], re: ['', 'e'], ti: ['stop', 'i'], so: ['', 'o'] };
+  if (WORD[w] && t.trim() === w) return { ...out, onset: WORD[w][0], vowel: WORD[w][1] };
   if (/^m/.test(w)) out.onset = 'm'; else if (/^n/.test(w)) out.onset = 'n'; else if (/^h/.test(w)) out.onset = 'h';
   else if (/^[gdbl]/.test(w)) out.onset = 'stop';
   const v = w.replace(/^(m|n|h|g|d|b|l)+/, '');
@@ -1478,10 +1481,38 @@ const DRILLS = {
   sustain:  { name: 'Long tone', pattern: [0], beat: 3 },
   minor:    { name: 'Minor scale', pattern: [0, 2, 3, 5, 7, 5, 3, 2, 0], beat: 0.5 },
   ninescale:{ name: 'Nine-note scale', pattern: [0, 2, 4, 5, 7, 9, 11, 12, 14, 12, 11, 9, 7, 5, 4, 2, 0], beat: 0.32 },
+  // Sung-word drills after Lew Lepton's piano tracks (github.com/miseenbutt/vocaltraining). Only the note patterns,
+  // rhythms and tempos are taken; the originals stay on the white keys as the root climbs, so their pattern changes
+  // mode on every repeat. Here it is moved whole, so every repeat is the same major pattern.
+  // beats = length of each note in beats (beat = seconds per beat); a null pitch is a rest.
+  doremi:   { name: 'Do re mi scale', desc: 'do re mi fa sol la ti do, and back down',
+              pattern: [0, 2, 4, 5, 7, 9, 11, 12, 11, 9, 7, 5, 4, 2, 0], beat: 0.75,
+              words: 'do re mi fa sol la ti do ti la sol fa mi re do'.split(' ') },
+  ladder:   { name: 'Do re mi ladder', desc: 'do re do, do re mi re do … up to the top do and back. One key, the middle of your range',
+              ladder: true, once: true, beat: 0.75 },
+  likesing: { name: 'I like to sing', desc: 'I like to sing, like to sing, like to sing · I like to sing, like to sing',
+              pattern: [0, 2, 4, 5, 4, 2, 0, 2, 4, 5, null, 2, 4, 5, 7, 5, 4, 2],
+              beats:   [1, .5, .5, 1, .5, .5, 1, .5, .5, 1, 1, 1, .5, .5, 1, .5, .5, 3], beat: 60 / 145,
+              words: ['I', 'like', 'to', 'sing', 'like', 'to', 'sing', 'like', 'to', 'sing', null, 'I', 'like', 'to', 'sing', 'like', 'to', 'sing'] },
+  memaw:    { name: 'Me my maw', desc: 'me ×8 (five notes up and down) · my ×4 · maw ×9',
+              pattern: [0, 2, 4, 5, 7, 5, 4, 2, 0, 2, 4, 5, 0, 2, 4, 5, 7, 5, 4, 2, 0],
+              beats:   [.5, .5, .5, .5, .5, .5, .5, .5, 1, 1, 1, 1, .5, .5, .5, .5, .5, .5, .5, .5, 2], beat: 60 / 140,
+              words: [...Array(8).fill('me'), ...Array(4).fill('my'), ...Array(9).fill('maw')] },
 };
+// Ladder: each rung climbs one scale step higher than the last, then the rungs shrink again.
+(function () {
+  const sc = [0, 2, 4, 5, 7, 9, 11, 12], sol = 'do re mi fa sol la ti do'.split(' ');
+  const pattern = [], words = [];
+  const rung = k => { for (let i = 0; i <= k; i++) { pattern.push(sc[i]); words.push(sol[i]); }
+    for (let i = k - 1; i >= 0; i--) { pattern.push(sc[i]); words.push(sol[i]); } };
+  for (let k = 1; k <= 7; k++) rung(k);
+  for (let k = 6; k >= 1; k--) rung(k);
+  Object.assign(DRILLS.ladder, { pattern, words });
+})();
 const SERIES = {
   quick: { name: 'Quick warm-up', drills: ['sustain', 'scale5', 'arpeggio'] },
   full:  { name: 'Full warm-up', drills: ['sustain', 'scale5', 'thirds', 'arpeggio', 'octave', 'ninescale'] },
+  words: { name: 'Sung-word warm-up', drills: ['memaw', 'likesing', 'doremi'] },
 };
 
 function buildDrill(keys, s, tempo = 1, down = true, o = {}) {
@@ -1491,20 +1522,25 @@ function buildDrill(keys, s, tempo = 1, down = true, o = {}) {
     const d = DRILLS[k], span = Math.max(...d.pattern), beat = d.beat / tempo;
     const roots = [];
     const lowest = o.topHalf ? Math.max(s.rangeLow, Math.round((s.rangeLow + s.rangeHigh) / 2) - 2) : s.rangeLow;
-    for (let r = lowest; r + span <= s.rangeHigh; r++) roots.push(r);
+    if (d.once) roots.push(Math.max(s.rangeLow, Math.round((s.rangeLow + s.rangeHigh - span) / 2)));   // one key, centred
+    else for (let r = lowest; r + span <= s.rangeHigh; r++) roots.push(r);
     if (!roots.length) roots.push(Math.max(s.rangeLow, s.rangeHigh - span));
     if (o.maxRoots && roots.length > o.maxRoots) {   // spread a few roots evenly through the range
       const pick = Array.from({ length: o.maxRoots }, (_, i) => roots[Math.round(i * (roots.length - 1) / (o.maxRoots - 1))]);
       roots.splice(0, roots.length, ...new Set(pick));
     }
-    const seq = down ? [...roots, ...roots.slice(0, -1).reverse()] : roots;
+    const seq = down && !d.once ? [...roots, ...roots.slice(0, -1).reverse()] : roots;
     // keep long lists manageable
     const step = seq.length > 14 ? 2 : 1;
     for (let i = 0; i < seq.length; i += step) {
       const r = seq[i];
       cues.push({ t0: t, t1: t + 0.7, midi: r });
       t += 0.9;
-      for (const iv of d.pattern) { notes.push({ t0: t, t1: t + beat * 0.92, midi: r + iv, label: o.label }); t += beat; }
+      d.pattern.forEach((iv, j) => {
+        const len = beat * (d.beats?.[j] ?? 1);
+        if (iv !== null) notes.push({ t0: t, t1: t + Math.min(len * 0.92, len - 0.04), midi: r + iv, label: d.words?.[j] ?? o.label });
+        t += len;
+      });
       t += 0.5;
     }
     t += 1;
@@ -1517,7 +1553,7 @@ route(/^\/drills$/, async () => {
   view.innerHTML = `<h1>Warm-ups</h1>
     <p class="dim">Each drill climbs semitone by semitone through your range (${noteName(s.rangeLow)}–${noteName(s.rangeHigh)}) and back down. Set your range on the <a href="#/range">Range</a> page.</p>
     <h2>Series</h2><div class="grid2">${Object.entries(SERIES).map(([k, v]) => `<a class="card" href="#/drill/${k}"><b>${v.name}</b><div class="dim small">${v.drills.map(d => DRILLS[d].name).join(' → ')}</div></a>`).join('')}</div>
-    <h2>Single drills</h2><div class="grid2">${Object.entries(DRILLS).map(([k, v]) => `<a class="card" href="#/drill/${k}"><b>${v.name}</b><div class="dim small">${v.pattern.map(i => '+' + i).join(' ')}</div></a>`).join('')}</div>`;
+    <h2>Single drills</h2><div class="grid2">${Object.entries(DRILLS).map(([k, v]) => `<a class="card" href="#/drill/${k}"><b>${v.name}</b><div class="dim small">${v.desc ? esc(v.desc) : v.pattern.map(i => '+' + i).join(' ')}</div></a>`).join('')}</div>`;
 }, 'drills');
 
 route(/^\/drill\/(\w+)$/, async key => {
@@ -1525,11 +1561,13 @@ route(/^\/drill\/(\w+)$/, async key => {
   const keys = SERIES[key]?.drills || (DRILLS[key] ? [key] : null);
   if (!keys) throw new Error('Unknown drill');
   const title = SERIES[key]?.name || DRILLS[key].name;
+  const sung = keys.filter(k => DRILLS[k].words);
   view.innerHTML = `<div class="row"><h1 class="grow">${esc(title)}</h1></div>
+    ${sung.length ? `<p class="small dim">Sing the words: ${sung.map(k => `${keys.length > 1 ? `<b>${esc(DRILLS[k].name)}:</b> ` : ''}${esc(DRILLS[k].desc)}`).join('<br>')}</p>` : ''}
     <div class="stage" id="stage" style="height:min(52vh,440px)"></div>
     <div class="controls">
       <button class="primary" id="play">▶ Start</button>
-      <label>Tempo <select id="tempo"><option value="0.8">Slow</option><option value="1" selected>Normal</option><option value="1.25">Fast</option></select></label>
+      <label>Tempo <select id="tempo"><option value="0.6">Very slow</option><option value="0.8">Slow</option><option value="1" selected>Normal</option><option value="1.25">Fast</option></select></label>
       <label><input type="checkbox" id="down" checked> Come back down</label>
       <label>Guide <input type="range" id="vG" min="0" max="1.2" step="0.05" value="0.6"></label>
     </div>
