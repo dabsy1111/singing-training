@@ -1,0 +1,13 @@
+Reference-note singing voices
+
+The clips in low.mp3 and high.mp3 are cut from VocalSet:
+  Julia Wilkins, Prem Seetharaman, Alison Wahl and Bryan Pardo (2018).
+  VocalSet: A Singing Voice Dataset. Zenodo. https://doi.org/10.5281/zenodo.1442513
+  Licence: Creative Commons Attribution 4.0 International (CC BY 4.0)
+  https://creativecommons.org/licenses/by/4.0/
+
+Changes made: single notes cut from the "straight" scales, arpeggios, long tones and lip
+trills of singers male6 (low.mp3) and female5 (high.mp3); each note pitch-shifted by up to
+4 semitones (formants preserved) to sit exactly on its semitone, levelled, faded in/out,
+and joined into one file per voice. voice.json lists where each clip starts.
+Built by tools/build_voice.py.

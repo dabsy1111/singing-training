@@ -65,6 +65,7 @@ async function audioCtx() {
       if (A.ctx?.state === 'interrupted') toast('Audio was interrupted (a call, Siri or another app). Press play again.', 6000);
     };
     A.ready = A.ctx.audioWorklet.addModule(`/static/pitch-worklet.js?v=${window.VL_VERSION || ''}`);
+    loadVoice(A.ctx).catch(() => {});   // fetch the singer's clips early
   }
   const resumed = A.ctx.state === 'running' ? null : A.ctx.resume().catch(() => {});
   await A.ready;
@@ -186,58 +187,10 @@ function playTone(ctx, dest, midi, when, dur, vol = 0.25) {
 }
 
 // ---------------------------------------------------------------- sung reference notes
-/* A synthesised singer: a glottal-like buzz (harmonics rolling off), shaped by five vowel formants,
- * with a small scoop into the note, delayed vibrato and a little breath. The exercise's syllable
- * picks the vowel and the start: "mum" hums an m first, "ha" breathes an h, "brrr" flutters.
- * Formant tables: Csound's formant table (bass/tenor/alto), uh estimated between ah and oh. */
-const FORMANTS = {
-  low: {   // tenor
-    a:  [[650, 80, 0], [1080, 90, -6], [2650, 120, -7], [2900, 130, -8], [3250, 140, -22]],
-    e:  [[400, 70, 0], [1700, 80, -9], [2600, 100, -8], [3200, 120, -12], [3580, 120, -20]],
-    i:  [[290, 40, 0], [1870, 90, -9], [2800, 100, -11], [3250, 120, -16], [3540, 120, -30]],
-    o:  [[400, 40, 0], [800, 80, -10], [2600, 100, -12], [2800, 120, -12], [3000, 120, -26]],
-    u:  [[350, 40, 0], [600, 60, -20], [2700, 100, -17], [2900, 120, -14], [3300, 120, -26]],
-    uh: [[560, 70, 0], [1100, 90, -9], [2600, 110, -12], [2900, 120, -14], [3250, 130, -24]],
-  },
-  high: {  // alto
-    a:  [[800, 80, 0], [1150, 90, -4], [2800, 120, -20], [3500, 130, -36], [4950, 140, -60]],
-    e:  [[400, 60, 0], [1600, 80, -14], [2700, 120, -20], [3300, 150, -28], [4950, 200, -60]],
-    i:  [[350, 50, 0], [1700, 100, -12], [2700, 120, -18], [3700, 150, -28], [4950, 200, -60]],
-    o:  [[450, 70, 0], [800, 80, -9], [2830, 100, -16], [3500, 130, -28], [4950, 135, -55]],
-    u:  [[325, 50, 0], [700, 60, -12], [2530, 170, -30], [3500, 180, -40], [4950, 200, -64]],
-    uh: [[650, 80, 0], [1100, 90, -8], [2800, 120, -20], [3500, 130, -34], [4950, 140, -60]],
-  },
-};
-// Make-up gain per vowel at these pitches (interpolated between), so every vowel and note sounds about
-// as loud as the others. Measured by rendering each one offline (RMS target 0.075 at vol 0.22).
-const VOICE_PITCHES = { low: [43, 46, 49, 52, 55, 58, 61, 64, 67, 70, 73], high: [53, 56, 59, 62, 65, 68, 71, 74, 77, 80, 83] };
-const VOICE_LEVEL = {
-  low: {
-    a: [3.9, 3.83, 3.81, 3.81, 3.67, 3.67, 3.88, 3.5, 4.11, 4.33, 3.14],
-    e: [3.64, 3.55, 3.45, 3.64, 3.42, 3.74, 3.85, 3.08, 2.44, 2.94, 3.9],
-    i: [3.75, 4.16, 3.72, 4.16, 4.67, 3.71, 2.55, 3.01, 4.69, 6.54, 8.14],
-    o: [4.39, 4.42, 4.03, 4.79, 3.86, 5.0, 5.27, 4.02, 2.52, 3.79, 6.19],
-    u: [4.43, 3.91, 4.62, 4.0, 4.42, 5.38, 4.32, 2.67, 3.11, 5.4, 7.29],
-    uh: [4.19, 4.1, 4.14, 4.06, 3.88, 4.3, 3.72, 4.61, 4.65, 3.56, 2.46],
-    hum: [1.68, 1.72, 1.77, 1.83, 1.89, 1.94, 1.96, 2.03, 2.32, 3.06, 4.13],
-  },
-  high: {
-    a: [4.23, 4.18, 3.84, 4.12, 4.3, 3.62, 5.41, 4.15, 3.18, 2.71, 4.86],
-    e: [3.85, 3.69, 4.41, 4.2, 2.99, 2.52, 3.61, 5.32, 7.32, 8.91, 11.37],
-    i: [3.66, 4.37, 4.52, 3.34, 2.49, 3.34, 5.17, 6.87, 9.16, 10.43, 12.55],
-    o: [3.74, 3.49, 3.6, 3.97, 3.51, 2.48, 2.68, 4.26, 5.74, 4.54, 5.56],
-    u: [3.77, 4.3, 3.71, 2.7, 2.58, 3.88, 5.96, 8.27, 6.4, 7.18, 9.5],
-    uh: [4.22, 3.81, 4.23, 4.02, 3.92, 4.88, 4.44, 2.78, 2.76, 5.03, 7.43],
-    hum: [1.86, 1.91, 1.95, 1.97, 2.09, 2.5, 3.42, 5.03, 7.48, 11.31, 16.47],
-  },
-};
-function voiceLevel(type, v, midi) {
-  const P = VOICE_PITCHES[type], G = VOICE_LEVEL?.[type]?.[v];
-  if (!G) return 1;
-  if (midi <= P[0]) return G[0];
-  for (let k = 1; k < P.length; k++) if (midi <= P[k]) return G[k - 1] + (G[k] - G[k - 1]) * (midi - P[k - 1]) / (P[k] - P[k - 1]);
-  return G[G.length - 1];
-}
+/* Real singers from VocalSet (Wilkins et al. 2018, CC BY 4.0; see static/voice/CREDITS.txt):
+ * male6 (low) and female5 (high) singing a e i o u and lip trills, cut into one clip per vowel and
+ * semitone, tuned to the exact note (≤ 4 semitones of shift, formants kept) and levelled.
+ * voice/{low,high}.mp3 hold the clips back to back; voice/voice.json maps vowel → midi → [start, length]. */
 // Syllable → { onset, vowel, flutter, closed }. Unknown labels sing "ah".
 function parseSyllable(label) {
   const t = String(label || '').toLowerCase();
@@ -261,94 +214,74 @@ function voiceTypeFor(s) {
   if (v === 'low' || v === 'high') return v;
   return ((s?.rangeLow ?? 48) + (s?.rangeHigh ?? 67)) / 2 < 62 ? 'low' : 'high';
 }
-// Shared per output: one formant bank per vowel, one hum filter, one noise buffer.
-const VOICE_BANKS = new WeakMap();
-function voiceBank(ctx, dest, type) {
-  let b = VOICE_BANKS.get(dest);
-  if (b && b.type === type) return b;
-  b = { type, vowels: {}, hum: null, noise: null };
-  const out = ctx.createGain(); out.gain.value = 1; out.connect(dest); b.out = out;
-  b.vowel = v => {
-    if (b.vowels[v]) return b.vowels[v];
-    const inp = ctx.createGain(), vg = ctx.createGain(); vg.connect(out);
-    for (const [f, bw, db] of FORMANTS[type][v]) {
-      const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = f; bp.Q.value = f / (bw * 2.4);   // wider than the table: smoother level from note to note
-      const g = ctx.createGain(); g.gain.value = Math.pow(10, db / 20);
-      inp.connect(bp); bp.connect(g); g.connect(vg);
-    }
-    const body = ctx.createBiquadFilter(); body.type = 'lowpass'; body.frequency.value = 900;   // keeps the fundamental when it sits above F1
-    const bg = ctx.createGain(); bg.gain.value = 0.05; inp.connect(body); body.connect(bg); bg.connect(vg);
-    return (b.vowels[v] = inp);
-  };
-  const hum = ctx.createGain(), hg = ctx.createGain(); hg.connect(out);
-  const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 380; lp.Q.value = 1.2;
-  const nas = ctx.createBiquadFilter(); nas.type = 'bandpass'; nas.frequency.value = type === 'low' ? 1000 : 1200; nas.Q.value = 6;
-  const ng = ctx.createGain(); ng.gain.value = 0.08;
-  hum.connect(lp); lp.connect(hg); hum.connect(nas); nas.connect(ng); ng.connect(hg);
-  b.hum = hum;
-  const len = ctx.sampleRate;
-  b.noise = ctx.createBuffer(1, len, ctx.sampleRate);
-  const d = b.noise.getChannelData(0); for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
-  const glottal = new Float32Array(40), zero = new Float32Array(40);
-  for (let n = 1; n < 40; n++) glottal[n] = Math.pow(n, -0.55) * (n % 2 ? 1 : 0.85);
-  b.wave = ctx.createPeriodicWave(zero, glottal);
-  VOICE_BANKS.set(dest, b);
-  return b;
+function voiceTypeFor(s) {
+  const v = s?.voiceType || 'auto';
+  if (v === 'low' || v === 'high') return v;
+  return ((s?.rangeLow ?? 48) + (s?.rangeHigh ?? 67)) / 2 < 62 ? 'low' : 'high';
 }
-function playVoice(ctx, dest, midi, when, dur, vol = 0.25, label = '', s = SETTINGS) {
-  const syl = parseSyllable(label), b = voiceBank(ctx, dest, voiceTypeFor(s));   // eslint-disable-line
-  const f = midiToHz(midi), nodes = [];
-  const type = voiceTypeFor(s), end = when + dur, level = vol * syl.vol * voiceLevel(type, syl.closed ? 'hum' : syl.vowel, midi);
-  const osc = ctx.createOscillator(); osc.setPeriodicWave(b.wave);
-  // a small scoop up into the note, as singers do
-  osc.frequency.setValueAtTime(f * Math.pow(2, -35 / 1200), when);
-  osc.frequency.exponentialRampToValueAtTime(f, when + Math.min(0.08, dur * 0.3));
-  if (dur > 0.55) {   // vibrato fades in after the start
-    const lfo = ctx.createOscillator(); lfo.frequency.value = 5.3 + Math.random() * 0.5;
-    const depth = ctx.createGain(); depth.gain.setValueAtTime(0, when);
-    depth.gain.setValueAtTime(0, when + 0.3); depth.gain.linearRampToValueAtTime(f * 0.016, when + 0.75);
-    lfo.connect(depth); depth.connect(osc.frequency); lfo.start(when); lfo.stop(end + 0.1); nodes.push(lfo);
+const VOICE = { map: null, buffers: new WeakMap() };   // per AudioContext: { low, high } AudioBuffers
+async function loadVoice(ctx, s = SETTINGS) {
+  if (s?.refSound === 'tone') return;
+  const type = voiceTypeFor(s);
+  try {
+    const q = '?v=' + encodeURIComponent(window.VL_VERSION || '1');
+    if (!VOICE.map) VOICE.map = await (await fetch('/static/voice/voice.json' + q)).json();
+    let per = VOICE.buffers.get(ctx);
+    if (!per) VOICE.buffers.set(ctx, per = {});
+    if (!per[type]) per[type] = fetch('/static/voice/' + VOICE.map[type].file + q).then(r => r.arrayBuffer()).then(b => ctx.decodeAudioData(b));
+    per[type] = await per[type];
+  } catch (e) { console.warn('voice clips not loaded', e); }
+}
+// Which clip: the exercise's vowel at this note, else a near vowel, else the nearest note (≤ 2 semitones, resampled).
+function voiceClip(type, midi, syl) {
+  const clips = VOICE.map?.[type]?.clips; if (!clips) return null;
+  const v = syl.closed ? 'u' : syl.flutter ? 'trill' : syl.vowel === 'uh' ? 'a' : syl.vowel;
+  const order = [v, ...(v === 'trill' ? ['u', 'o'] : []), 'a', 'o', 'u', 'e', 'i'];
+  for (const k of order) if (clips[k]?.[midi]) return { at: clips[k][midi], rate: 1 };
+  for (let d = 1; d <= 2; d++) for (const k of order) for (const m of [midi - d, midi + d])
+    if (clips[k]?.[m]) return { at: clips[k][m], rate: Math.pow(2, (midi - m) / 12) };
+  return null;
+}
+const XF_IN = Float32Array.from({ length: 32 }, (_, i) => Math.sin(i / 31 * Math.PI / 2)), XF_OUT = XF_IN.slice().reverse();
+function playSung(ctx, dest, midi, when, dur, vol = 0.25, label = '', s = SETTINGS) {
+  const type = voiceTypeFor(s), buf = VOICE.buffers.get(ctx)?.[type];
+  const syl = parseSyllable(label), clip = buf && !(buf instanceof Promise) && voiceClip(type, midi, syl);
+  if (!clip) return playTone(ctx, dest, midi, when, dur, vol);
+  const [start, len] = clip.at, rate = clip.rate, nodes = [];
+  const level = (vol / 0.22) * 1.25 * syl.vol;
+  // the note's own shape: a quick fade in, steady, a short fade at the end of the note
+  const env = ctx.createGain(), end = when + dur, rel = Math.min(0.07, dur * 0.25);
+  env.gain.setValueAtTime(0, when); env.gain.linearRampToValueAtTime(level, when + 0.02);
+  env.gain.setValueAtTime(level, Math.max(when + 0.02, end - rel)); env.gain.linearRampToValueAtTime(0.0001, end);
+  let out = env;
+  if (syl.closed || syl.onset === 'm' || syl.onset === 'n') {   // lips closed: muffle; "m"/"n" open into the vowel
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = 0.7;
+    if (syl.closed) lp.frequency.value = 480;
+    else { lp.frequency.setValueAtTime(420, when); lp.frequency.setValueAtTime(420, when + 0.06); lp.frequency.exponentialRampToValueAtTime(12000, when + Math.min(0.14, dur * 0.4)); }
+    env.connect(lp); out = lp;
   }
-  const env = ctx.createGain();
-  const att = syl.onset === 'stop' ? 0.02 : 0.05, rel = Math.min(0.09, dur * 0.25);
-  env.gain.setValueAtTime(0, when); env.gain.linearRampToValueAtTime(level, when + att);
-  env.gain.setValueAtTime(level, Math.max(when + att, end - rel)); env.gain.linearRampToValueAtTime(0.0001, end);
-  osc.connect(env);
-  let src = env;
-  if (syl.flutter) {   // lip trill: the sound chops ~26 times a second
-    const am = ctx.createGain(); am.gain.value = 0.55;
-    const flut = ctx.createOscillator(); flut.type = 'triangle'; flut.frequency.value = 24 + Math.random() * 4;
-    const fd = ctx.createGain(); fd.gain.value = 0.45; flut.connect(fd); fd.connect(am.gain);
-    flut.start(when); flut.stop(end + 0.1); nodes.push(flut);
-    env.connect(am); src = am;
+  out.connect(dest);
+  const clipLen = len / rate;   // seconds of audio at this playback rate
+  const piece = (t, off, d, fadeIn, fadeOut) => {
+    const src = ctx.createBufferSource(); src.buffer = buf; src.playbackRate.value = rate;
+    const g = ctx.createGain(); src.connect(g); g.connect(env);
+    g.gain.setValueAtTime(fadeIn ? 0 : 1, t);   // equal-power fades so joins don't dip
+    if (fadeIn) g.gain.setValueCurveAtTime(XF_IN, t, fadeIn);
+    if (fadeOut) g.gain.setValueCurveAtTime(XF_OUT, t + d - fadeOut, fadeOut);
+    src.start(t, start + off * rate, d * rate + 0.01); nodes.push(src);
+  };
+  if (dur <= clipLen - 0.04) piece(when, 0, dur, 0, 0);
+  else {   // longer than the recording: repeat its steady middle with overlapping fades
+    const a = clipLen * 0.3, b = clipLen * 0.85, seg = b - a, xf = Math.min(0.12, seg * 0.3);   // at most two pieces sound at once
+    piece(when, 0, b, 0, xf);
+    let t = when + b - xf;
+    while (t < end) { const d = Math.max(2 * xf + 0.01, Math.min(seg, end - t + 0.02)); piece(t, a, d, xf, xf); t += seg - xf; }   // the note's own fade ends it
   }
-  const vowelIn = b.vowel(syl.vowel);
-  if (syl.closed) src.connect(b.hum);
-  else if (syl.onset === 'm' || syl.onset === 'n') {   // hum the consonant, then open into the vowel
-    const t = Math.min(0.11, dur * 0.3);
-    const gh = ctx.createGain(), gv = ctx.createGain();
-    gh.gain.setValueAtTime(1, when); gh.gain.setValueAtTime(1, when + t * 0.6); gh.gain.linearRampToValueAtTime(0, when + t);
-    gv.gain.setValueAtTime(0, when); gv.gain.setValueAtTime(0, when + t * 0.6); gv.gain.linearRampToValueAtTime(1, when + t);
-    src.connect(gh); gh.connect(b.hum); src.connect(gv); gv.connect(vowelIn);
-  } else src.connect(vowelIn);
-  // breath: an "h" before the note, plus a faint breathy edge throughout
-  const nz = ctx.createBufferSource(); nz.buffer = b.noise; nz.loop = true;
-  const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 1200;
-  const ng = ctx.createGain();
-  const hStart = syl.onset === 'h' ? Math.max(ctx.currentTime, when - 0.08) : when;
-  ng.gain.setValueAtTime(0, hStart);
-  if (syl.onset === 'h') { ng.gain.linearRampToValueAtTime(level * 0.9, hStart + 0.03); ng.gain.linearRampToValueAtTime(level * 0.05, when + 0.05); }
-  else ng.gain.linearRampToValueAtTime(level * 0.04, when + att);
-  ng.gain.setValueAtTime(level * 0.04, Math.max(when + 0.06, end - rel)); ng.gain.linearRampToValueAtTime(0.0001, end);
-  nz.connect(hp); hp.connect(ng); ng.connect(syl.closed ? b.hum : vowelIn);
-  nz.start(hStart); nz.stop(end + 0.05);
-  osc.start(when); osc.stop(end + 0.05);
-  nodes.push(osc, nz);
   return nodes;
 }
 // Reference notes: sung or plain tone, per Settings.
 function playRef(ctx, dest, midi, when, dur, vol = 0.25, label = '') {
-  return SETTINGS?.refSound === 'tone' ? playTone(ctx, dest, midi, when, dur, vol) : playVoice(ctx, dest, midi, when, dur, vol, label);
+  return SETTINGS?.refSound === 'tone' ? playTone(ctx, dest, midi, when, dur, vol) : playSung(ctx, dest, midi, when, dur, vol, label);
 }
 
 // ---------------------------------------------------------------- little shared trackers
@@ -475,6 +408,7 @@ class Practice {
 
   async play({ from, to }) {
     const ctx = await startMic();
+    if (!this.audio.buffers) await Promise.race([loadVoice(ctx, this.opts.settings), new Promise(r => setTimeout(r, 6000))]);
     const s = this.opts.settings;
     this.section = { from, to };
     // rate < 1 = slowed-down audio: song time runs at rate × real time. Latency stays in real seconds.
@@ -1852,6 +1786,7 @@ async function runEarQuiz(box, mode, levelName, s, { save = true } = {}) {
   let off = null;
   // Sing-back needs the mic; open it first so the same audio setup is used throughout (matters on iPhone).
   const ctx = mode === 'sb' ? await startMic() : await audioCtx();
+  await loadVoice(ctx);
   const answers = [];
   const out = ctx.createGain(); out.connect(ctx.destination);
   function ask(text, options, replay) {
@@ -2026,9 +1961,10 @@ route(/^\/settings$/, async () => {
       <label>Mic filter: <b id="mfName">${MIC_FILTER_NAMES[s.micFilter ?? 2]}</b>
         <input type="range" name="micFilter" min="0" max="3" step="1" value="${s.micFilter ?? 2}"></label>
       <p class="small dim" id="mfHelp" style="grid-column:1/-1;margin:0"></p>
-      <label>Reference notes <select name="refSound"><option value="voice"${s.refSound !== 'tone' ? ' selected' : ''}>Sung voice</option><option value="tone"${s.refSound === 'tone' ? ' selected' : ''}>Plain tone</option></select></label>
-      <label>Voice <select name="voiceType">${[['auto', 'Match my range'], ['low', 'Low (men’s)'], ['high', 'High (women’s)']].map(([v, l]) => `<option value="${v}"${(s.voiceType || 'auto') === v ? ' selected' : ''}>${l}</option>`).join('')}</select></label>
-      <div class="row" style="grid-column:1/-1"><button id="hearVoice">▶ Hear it</button><span class="small dim">Plays a short “mum” scale with the choices above.</span></div>
+      <label>Reference notes <select name="refSound"><option value="voice"${s.refSound !== 'tone' ? ' selected' : ''}>Real singer</option><option value="tone"${s.refSound === 'tone' ? ' selected' : ''}>Plain tone</option></select></label>
+      <label>Voice <select name="voiceType">${[['auto', 'Match my range'], ['low', 'Low (male singer)'], ['high', 'High (female singer)']].map(([v, l]) => `<option value="${v}"${(s.voiceType || 'auto') === v ? ' selected' : ''}>${l}</option>`).join('')}</select></label>
+      <p class="small dim" style="grid-column:1/-1;margin:0">Singers: <a href="https://doi.org/10.5281/zenodo.1442513" target="_blank" rel="noopener">VocalSet</a> (Wilkins, Seetharaman, Wahl &amp; Pardo, 2018), CC BY 4.0, tuned to exact notes.</p>
+      <div class="row" style="grid-column:1/-1"><button id="hearVoice">▶ Hear it</button><span class="small dim">Plays a short scale on “ah”, then a long “oo”, with the choices above.</span></div>
     </div>
     <div class="row"><button class="primary" id="save">Save</button>
       <button id="preset-b">Beginner tolerances</button><button id="preset-a">Advanced tolerances</button></div>
@@ -2052,11 +1988,13 @@ route(/^\/settings$/, async () => {
   $('#preset-b').onclick = () => { form.querySelector('[name=greenCents]').value = 35; form.querySelector('[name=amberCents]').value = 70; };
   $('#preset-a').onclick = () => { form.querySelector('[name=greenCents]').value = 15; form.querySelector('[name=amberCents]').value = 35; };
   $('#hearVoice').onclick = async () => {
-    const ctx = await audioCtx(), out = ctx.destination, t = ctx.currentTime + 0.1;
+    const ctx = await audioCtx(), out = ctx.destination;
     const pick = { ...s, refSound: form.querySelector('[name=refSound]').value, voiceType: form.querySelector('[name=voiceType]').value };
-    const root = Math.round((s.rangeLow + s.rangeHigh) / 2) - 3;
+    if (pick.refSound !== 'tone') await loadVoice(ctx, pick);
+    const root = Math.round((s.rangeLow + s.rangeHigh) / 2) - 3, t = ctx.currentTime + 0.1;
     [0, 2, 4, 5, 7, 5, 4, 2, 0].forEach((iv, k) => pick.refSound === 'tone' ? playTone(ctx, out, root + iv, t + k * 0.45, 0.42, 0.25)
-      : playVoice(ctx, out, root + iv, t + k * 0.45, 0.42, 0.25, 'mum', pick));
+      : playSung(ctx, out, root + iv, t + k * 0.45, 0.42, 0.25, 'ah', pick));
+    playSung(ctx, out, root, t + 4.3, 1.6, 0.25, 'oo', pick);
   };
   $('#latSave').onclick = () => { setDeviceLatencyMs(Number($('#lat').value)); toast('Saved for this device'); };
   $('#latCheck').onclick = async () => { await timingCheck(); $('#lat').value = deviceLatencyMs(); };
