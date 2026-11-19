@@ -145,6 +145,21 @@ def client():
     return _client
 
 
+_KEY_RE = re.compile(r"sk-[A-Za-z0-9_\-*]{4,}")
+
+
+def _redact(text: str) -> str:
+    """OpenAI's own error text can quote part of a key ("sk-proj-****abcd"); never pass that on."""
+    return _KEY_RE.sub("sk-…", str(text))
+
+
+def _hint(status):
+    return {401: "(the API key is wrong or revoked): ",
+            403: "(this key's project can't use that model): ",
+            404: "(model not found; check OPENAI_MODEL): ",
+            429: "(rate limit, or no credit left on the account): "}.get(status, "")
+
+
 def user_id(raw: str | None) -> str:
     """One password protects the whole app, so userId just separates people sharing it."""
     uid = (raw or DEFAULT_USER).strip()
@@ -233,11 +248,12 @@ def run_coach(uid, messages, session_id=None):
                 model=OPENAI_MODEL, messages=messages, tools=TOOLS, max_completion_tokens=MAX_TOKENS)
         except HTTPException:
             raise
-        except Exception as e:   # openai.APIError and friends; their text never includes the key
+        except Exception as e:   # openai.APIError and friends
             status = getattr(e, "status_code", None)
-            log.warning("OpenAI call failed: %s %s", type(e).__name__, status or "")
-            msg = getattr(e, "message", None) or str(e)
-            raise HTTPException(502, f"OpenAI: {msg[:300]}")
+            msg = _redact(getattr(e, "message", None) or str(e))
+            log.warning("OpenAI call failed (%s %s): %s", type(e).__name__, status or "-", msg[:300])
+            # 424, not 502: Cloudflare swaps an origin's 502 for its own page and the reason is lost.
+            raise HTTPException(424, f"OpenAI {status or ''} {_hint(status)}{msg[:300]}".replace("  ", " "))
         msg = resp.choices[0].message
         if not msg.tool_calls:
             reply = (msg.content or "").strip()

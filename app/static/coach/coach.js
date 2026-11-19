@@ -14,8 +14,14 @@ async function api(path, opts = {}) {
     body: opts.body ? JSON.stringify(opts.body) : undefined,
   });
   if (r.status === 401) { location.href = '/login'; throw new Error('Not signed in'); }
-  const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
+  const raw = await r.text();
+  let data = {};
+  try { data = raw ? JSON.parse(raw) : {}; } catch {}
+  if (!r.ok) {
+    const why = typeof data.detail === 'string' ? data.detail
+      : (raw.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160) || 'no details');
+    throw new Error(`HTTP ${r.status}: ${why}`);
+  }
   return data;
 }
 
