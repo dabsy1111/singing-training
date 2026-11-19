@@ -187,3 +187,12 @@ canvas.vrp { width: 100%; height: 240px; display: block; background: rgba(0,0,0,
 .coach-inline .coach-reply { margin: 4px 0 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .coach-inline .coach-q { margin: 8px 0 0; color: var(--accent); }
 .coach-inline .coach-ask input { min-width: 0; }
+
+/* find songs */
+.seg { gap: 6px; margin-bottom: 12px; }
+.seg button.on { background: var(--accent); border-color: var(--accent); color: #0b1020; font-weight: 600; }
+.lvl { display: inline-block; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .4px;
+  padding: 1px 7px; border-radius: 99px; margin-right: 6px; background: var(--panel2); }
+.lvl.easy { color: var(--green); } .lvl.medium { color: var(--amber); } .lvl.hard { color: var(--red); }
+#stretchBox summary { cursor: pointer; color: var(--dim); }
+#about p { margin: 8px 0 0; }

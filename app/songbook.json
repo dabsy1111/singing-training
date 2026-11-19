@@ -1,0 +1,641 @@
+{
+ "version": 1,
+ "note": "Melody ranges from the Singing Carrots song database (singingcarrots.com, user-submitted). Vocal Lab checks the real notes once a song is added.",
+ "sources": {
+  "singingcarrots": {
+   "name": "Singing Carrots",
+   "url": "https://singingcarrots.com/song-chart-voice/baritone"
+  },
+  "musicianwave": {
+   "name": "Musician Wave: 50 easy songs to sing",
+   "url": "https://www.musicianwave.com/easy-songs-to-sing-for-beginners/"
+  },
+  "emastered": {
+   "name": "eMastered: 30 easy songs for beginner singers",
+   "url": "https://emastered.com/blog/easy-songs-for-beginner-singers"
+  },
+  "30daysinger": {
+   "name": "30 Day Singer: best karaoke songs for low voices",
+   "url": "https://www.30daysinger.com/blog/15-best-karaoke-songs-for-low-voices"
+  },
+  "gigwise": {
+   "name": "Gigwise: 25 easy songs for beginners",
+   "url": "https://gigwise.com/master-the-art-of-singing-25-easy-songs-for-beginners"
+  },
+  "zinginstruments": {
+   "name": "Zing Instruments: 17 easy songs to sing",
+   "url": "https://zinginstruments.com/?p=538493"
+  }
+ },
+ "levels": {
+  "easy": "About an octave or less, slow or steady tempo, small steps, a repeating chorus.",
+  "medium": "Wider span or a jump into the chorus, faster or wordier lines, long held phrases.",
+  "hard": "Fast, dense lyrics, tricky timing or key changes, or the whole of your range with exposed held notes."
+ },
+ "songs": [
+  {
+   "id": "the-doors-riders-on-the-storm",
+   "artist": "The Doors",
+   "title": "Riders on the Storm",
+   "low": 50,
+   "high": 59,
+   "difficulty": "easy",
+   "why": "Low, slow and repetitive; almost every line sits on the same few notes.",
+   "rated": [
+    "30daysinger"
+   ],
+   "yt": "7G2-FPlvY58"
+  },
+  {
+   "id": "lou-reed-walk-on-the-wild-side",
+   "artist": "Lou Reed",
+   "title": "Walk on the Wild Side",
+   "low": 43,
+   "high": 55,
+   "difficulty": "easy",
+   "why": "Half-spoken verses over one octave; the \"doo, da-doo\" hook is the only real tune.",
+   "rated": [],
+   "yt": "oG6fayQBm9w"
+  },
+  {
+   "id": "johnny-cash-hurt",
+   "artist": "Johnny Cash",
+   "title": "Hurt",
+   "low": 41,
+   "high": 55,
+   "difficulty": "easy",
+   "why": "Slow, close to speech, and low; the work is keeping the long notes steady.",
+   "rated": [
+    "musicianwave"
+   ],
+   "yt": "8AHCfZTRGiI"
+  },
+  {
+   "id": "george-ezra-budapest",
+   "artist": "George Ezra",
+   "title": "Budapest",
+   "low": 48,
+   "high": 60,
+   "difficulty": "easy",
+   "why": "One octave, a bouncy repeated chorus and no leaps.",
+   "rated": [],
+   "yt": "VHrLPs3_1Fs"
+  },
+  {
+   "id": "elvis-presley-love-me-tender",
+   "artist": "Elvis Presley",
+   "title": "Love Me Tender",
+   "low": 50,
+   "high": 60,
+   "difficulty": "easy",
+   "why": "Slow, stepwise melody; good for practising smooth, held notes.",
+   "rated": [],
+   "yt": "-9dtQzg7gDM"
+  },
+  {
+   "id": "elvis-presley-in-the-ghetto",
+   "artist": "Elvis Presley",
+   "title": "In the Ghetto",
+   "low": 46,
+   "high": 60,
+   "difficulty": "easy",
+   "why": "Storytelling verses on a narrow tune; the chorus repeats the verse shape.",
+   "rated": [],
+   "yt": "FJ-r0bilzhU"
+  },
+  {
+   "id": "bob-dylan-make-you-feel-my-love",
+   "artist": "Bob Dylan",
+   "title": "Make You Feel My Love",
+   "low": 43,
+   "high": 58,
+   "difficulty": "easy",
+   "why": "Slow ballad, small steps, lots of space to breathe between lines.",
+   "rated": [],
+   "yt": "fdWto-AUM3Q"
+  },
+  {
+   "id": "bob-dylan-blowin-in-the-wind",
+   "artist": "Bob Dylan",
+   "title": "Blowin' in the Wind",
+   "low": 47,
+   "high": 57,
+   "difficulty": "easy",
+   "why": "Under an octave, folk-simple, same tune every verse.",
+   "rated": [
+    "musicianwave"
+   ],
+   "yt": "MMFj8uDubsE"
+  },
+  {
+   "id": "gary-jules-mad-world",
+   "artist": "Gary Jules",
+   "title": "Mad World",
+   "low": 45,
+   "high": 59,
+   "difficulty": "easy",
+   "why": "Slow, quiet and narrow; mostly a few repeated notes.",
+   "rated": [
+    "emastered"
+   ],
+   "yt": "etSbOs3aUqI"
+  },
+  {
+   "id": "the-church-under-the-milky-way",
+   "artist": "The Church",
+   "title": "Under the Milky Way",
+   "low": 45,
+   "high": 57,
+   "difficulty": "easy",
+   "why": "One octave in a relaxed baritone; the chorus repeats.",
+   "rated": [],
+   "yt": "pWxJEIz7sSA"
+  },
+  {
+   "id": "iggy-pop-the-passenger",
+   "artist": "Iggy Pop",
+   "title": "The Passenger",
+   "low": 45,
+   "high": 53,
+   "difficulty": "easy",
+   "why": "Under an octave, steady rhythm, and a \"la la la\" chorus.",
+   "rated": [],
+   "yt": "-fWw7FE9tTo"
+  },
+  {
+   "id": "joy-division-love-will-tear-us-apart",
+   "artist": "Joy Division",
+   "title": "Love Will Tear Us Apart",
+   "low": 45,
+   "high": 55,
+   "difficulty": "easy",
+   "why": "Low, narrow and repetitive; mostly about rhythm.",
+   "rated": [],
+   "yt": "zuuObGsB0No"
+  },
+  {
+   "id": "snow-patrol-chasing-cars",
+   "artist": "Snow Patrol",
+   "title": "Chasing Cars",
+   "low": 52,
+   "high": 62,
+   "difficulty": "easy",
+   "why": "Under an octave and nearly spoken in the verses.",
+   "rated": [
+    "musicianwave",
+    "emastered",
+    "zinginstruments"
+   ],
+   "yt": "GemKqzILV4w"
+  },
+  {
+   "id": "sting-fields-of-gold",
+   "artist": "Sting",
+   "title": "Fields of Gold",
+   "low": 50,
+   "high": 62,
+   "difficulty": "easy",
+   "why": "One octave, slow, smooth lines.",
+   "rated": [
+    "musicianwave"
+   ],
+   "yt": "KLVq0IAzh1A"
+  },
+  {
+   "id": "r-e-m-losing-my-religion",
+   "artist": "R.E.M.",
+   "title": "Losing My Religion",
+   "low": 50,
+   "high": 60,
+   "difficulty": "easy",
+   "why": "Built around a single note with small jumps.",
+   "rated": [
+    "musicianwave",
+    "gigwise"
+   ],
+   "yt": "xwtdhWltSIg"
+  },
+  {
+   "id": "paul-kelly-from-little-things-big-things-grow",
+   "artist": "Paul Kelly",
+   "title": "From Little Things Big Things Grow",
+   "low": 50,
+   "high": 62,
+   "difficulty": "easy",
+   "why": "One octave, a story told over the same simple verse tune.",
+   "rated": [],
+   "yt": "6_ndC07C2qw"
+  },
+  {
+   "id": "america-a-horse-with-no-name",
+   "artist": "America",
+   "title": "A Horse with No Name",
+   "low": 54,
+   "high": 62,
+   "difficulty": "easy",
+   "why": "Two chords, a tiny range and a \"la la\" chorus.",
+   "rated": [],
+   "yt": "na47wMFfQCo"
+  },
+  {
+   "id": "kenny-rogers-lucille",
+   "artist": "Kenny Rogers",
+   "title": "Lucille",
+   "low": 45,
+   "high": 58,
+   "difficulty": "easy",
+   "why": "Narrow and conversational; the chorus is the easiest part.",
+   "rated": [],
+   "yt": "kulJsH8v0ok"
+  },
+  {
+   "id": "randy-travis-forever-and-ever-amen",
+   "artist": "Randy Travis",
+   "title": "Forever and Ever, Amen",
+   "low": 45,
+   "high": 59,
+   "difficulty": "easy",
+   "why": "Low country baritone, narrow and repetitive.",
+   "rated": [],
+   "yt": "KtKXc_v2iLE"
+  },
+  {
+   "id": "willie-nelson-always-on-my-mind",
+   "artist": "Willie Nelson",
+   "title": "Always on My Mind",
+   "low": 43,
+   "high": 59,
+   "difficulty": "easy",
+   "why": "Slow, gentle, small range; good for soft singing.",
+   "rated": [],
+   "yt": "R7f189Z0v0Y"
+  },
+  {
+   "id": "jack-johnson-better-together",
+   "artist": "Jack Johnson",
+   "title": "Better Together",
+   "low": 46,
+   "high": 60,
+   "difficulty": "easy",
+   "why": "Laid-back, quiet, mostly stepwise.",
+   "rated": [],
+   "yt": "seZMOTGCDag"
+  },
+  {
+   "id": "green-day-boulevard-of-broken-dreams",
+   "artist": "Green Day",
+   "title": "Boulevard of Broken Dreams",
+   "low": 50,
+   "high": 62,
+   "difficulty": "easy",
+   "why": "One octave and a steady beat; the chorus repeats.",
+   "rated": [],
+   "yt": "hBvJyi3fbtA"
+  },
+  {
+   "id": "eric-clapton-wonderful-tonight",
+   "artist": "Eric Clapton",
+   "title": "Wonderful Tonight",
+   "low": 50,
+   "high": 64,
+   "difficulty": "easy",
+   "why": "Slow and simple; good for long, even notes.",
+   "rated": [],
+   "yt": "fxAiUq8yn34"
+  },
+  {
+   "id": "slim-dusty-duncan",
+   "artist": "Slim Dusty",
+   "title": "Duncan",
+   "low": 45,
+   "high": 57,
+   "difficulty": "easy",
+   "why": "Pub sing-along: one octave, four lines, round and round.",
+   "rated": [],
+   "yt": "hOML9zwoZn0"
+  },
+  {
+   "id": "johnny-cash-folsom-prison-blues",
+   "artist": "Johnny Cash",
+   "title": "Folsom Prison Blues",
+   "low": 41,
+   "high": 60,
+   "difficulty": "medium",
+   "why": "Uses your whole range, bottom note to top, at a brisk shuffle.",
+   "rated": [],
+   "yt": "AeZRYhLDLeU"
+  },
+  {
+   "id": "johnny-cash-ghost-riders-in-the-sky",
+   "artist": "Johnny Cash",
+   "title": "Ghost Riders in the Sky",
+   "low": 41,
+   "high": 58,
+   "difficulty": "medium",
+   "why": "Sits right on your lowest notes; the \"yippie-yi-ay\" needs a steady, full tone.",
+   "rated": [],
+   "yt": "rGRsATIVI8Y"
+  },
+  {
+   "id": "nick-cave-the-bad-seeds-red-right-hand",
+   "artist": "Nick Cave & The Bad Seeds",
+   "title": "Red Right Hand",
+   "low": 45,
+   "high": 54,
+   "difficulty": "medium",
+   "why": "Range is small, but the tone and timing are hard to nail.",
+   "rated": [
+    "30daysinger"
+   ],
+   "yt": "YUNFgN-Lh6c"
+  },
+  {
+   "id": "paul-kelly-dumb-things",
+   "artist": "Paul Kelly",
+   "title": "Dumb Things",
+   "low": 45,
+   "high": 62,
+   "difficulty": "medium",
+   "why": "Quick, wordy lines over a wider range.",
+   "rated": [],
+   "yt": "ZR-eTR3Dcps"
+  },
+  {
+   "id": "paul-kelly-how-to-make-gravy",
+   "artist": "Paul Kelly",
+   "title": "How to Make Gravy",
+   "low": 47,
+   "high": 64,
+   "difficulty": "medium",
+   "why": "Long, talky verses that climb in the chorus.",
+   "rated": [],
+   "yt": "iYqIF2XkqKU"
+  },
+  {
+   "id": "the-whitlams-no-aphrodisiac",
+   "artist": "The Whitlams",
+   "title": "No Aphrodisiac",
+   "low": 45,
+   "high": 60,
+   "difficulty": "medium",
+   "why": "Long song with lots of words and a build to the top of the range.",
+   "rated": [],
+   "yt": "8qi7SlM1eDk"
+  },
+  {
+   "id": "bill-withers-lean-on-me",
+   "artist": "Bill Withers",
+   "title": "Lean on Me",
+   "low": 47,
+   "high": 64,
+   "difficulty": "medium",
+   "why": "Simple tune but a wide span, and the \"call me\" lines move fast.",
+   "rated": [],
+   "yt": "gOZgo8gMIoM"
+  },
+  {
+   "id": "frank-sinatra-strangers-in-the-night",
+   "artist": "Frank Sinatra",
+   "title": "Strangers in the Night",
+   "low": 45,
+   "high": 62,
+   "difficulty": "medium",
+   "why": "Long, held crooner phrases; breath control matters.",
+   "rated": [],
+   "yt": "Sek1vLw3s20"
+  },
+  {
+   "id": "kenny-rogers-the-gambler",
+   "artist": "Kenny Rogers",
+   "title": "The Gambler",
+   "low": 46,
+   "high": 64,
+   "difficulty": "medium",
+   "why": "Story verses then a chorus that jumps up.",
+   "rated": [],
+   "yt": "7hx4gdlfamo"
+  },
+  {
+   "id": "steve-earle-copperhead-road",
+   "artist": "Steve Earle",
+   "title": "Copperhead Road",
+   "low": 47,
+   "high": 62,
+   "difficulty": "medium",
+   "why": "Lots of words, half-shouted, at a driving tempo.",
+   "rated": [],
+   "yt": "xvaEJzoaYZk"
+  },
+  {
+   "id": "tennessee-ernie-ford-sixteen-tons",
+   "artist": "Tennessee Ernie Ford",
+   "title": "Sixteen Tons",
+   "low": 47,
+   "high": 64,
+   "difficulty": "medium",
+   "why": "Deep, round tone across a wide span; swing timing.",
+   "rated": [],
+   "yt": "ZaWVzUc7FpE"
+  },
+  {
+   "id": "creedence-clearwater-revival-proud-mary",
+   "artist": "Creedence Clearwater Revival",
+   "title": "Proud Mary",
+   "low": 48,
+   "high": 64,
+   "difficulty": "medium",
+   "why": "Gritty rock voice and a jump into the chorus.",
+   "rated": [],
+   "yt": "_MqKttEyYKc"
+  },
+  {
+   "id": "cat-stevens-wild-world",
+   "artist": "Cat Stevens",
+   "title": "Wild World",
+   "low": 48,
+   "high": 64,
+   "difficulty": "medium",
+   "why": "Chorus climbs, with a held top note.",
+   "rated": [],
+   "yt": "-xLfxNuW-xo"
+  },
+  {
+   "id": "gordon-lightfoot-if-you-could-read-my-mind",
+   "artist": "Gordon Lightfoot",
+   "title": "If You Could Read My Mind",
+   "low": 43,
+   "high": 59,
+   "difficulty": "medium",
+   "why": "Narrow, but very long lines with few places to breathe.",
+   "rated": [],
+   "yt": "s0TK8eyydCU"
+  },
+  {
+   "id": "dire-straits-brothers-in-arms",
+   "artist": "Dire Straits",
+   "title": "Brothers in Arms",
+   "low": 40,
+   "high": 59,
+   "difficulty": "medium",
+   "why": "Very low, slow and quiet; your bottom notes need to stay in tune.",
+   "rated": [],
+   "yt": "jhdFe3evXpk"
+  },
+  {
+   "id": "nirvana-the-man-who-sold-the-world",
+   "artist": "Nirvana",
+   "title": "The Man Who Sold the World",
+   "low": 50,
+   "high": 62,
+   "difficulty": "medium",
+   "why": "Unplugged version; odd intervals and a held top note.",
+   "rated": [],
+   "yt": "fregObNcHC8"
+  },
+  {
+   "id": "the-clash-should-i-stay-or-should-i-go",
+   "artist": "The Clash",
+   "title": "Should I Stay or Should I Go",
+   "low": 47,
+   "high": 61,
+   "difficulty": "medium",
+   "why": "Shouty energy and quick switches between verse and chorus.",
+   "rated": [],
+   "yt": "BN1WwnEDWAM"
+  },
+  {
+   "id": "harry-belafonte-day-o-the-banana-boat-song",
+   "artist": "Harry Belafonte",
+   "title": "Day-O (The Banana Boat Song)",
+   "low": 43,
+   "high": 60,
+   "difficulty": "medium",
+   "why": "Long called-out \"Day-O\" notes and call-and-answer timing.",
+   "rated": [],
+   "yt": "oKD_PfCQx9A"
+  },
+  {
+   "id": "pearl-jam-just-breathe",
+   "artist": "Pearl Jam",
+   "title": "Just Breathe",
+   "low": 43,
+   "high": 62,
+   "difficulty": "medium",
+   "why": "Gentle, but covers almost your whole range.",
+   "rated": [],
+   "yt": "XTb9GNIxpMk"
+  },
+  {
+   "id": "jim-croce-time-in-a-bottle",
+   "artist": "Jim Croce",
+   "title": "Time in a Bottle",
+   "low": 45,
+   "high": 60,
+   "difficulty": "medium",
+   "why": "Lilting 3/4 melody with jumps and long phrases.",
+   "rated": [],
+   "yt": "Q29sOLG8xGE"
+  },
+  {
+   "id": "leonard-cohen-everybody-knows",
+   "artist": "Leonard Cohen",
+   "title": "Everybody Knows",
+   "low": 46,
+   "high": 60,
+   "difficulty": "medium",
+   "why": "Low, wordy and steady; holding pitch while half-speaking is the skill.",
+   "rated": [],
+   "yt": "Gxd23UVID7k"
+  },
+  {
+   "id": "johnny-cash-ive-been-everywhere",
+   "artist": "Johnny Cash",
+   "title": "I've Been Everywhere",
+   "low": 43,
+   "high": 59,
+   "difficulty": "hard",
+   "why": "Narrow range but a rapid list of place names: breath and diction at speed.",
+   "rated": [],
+   "yt": "sVHOMq3CWxA"
+  },
+  {
+   "id": "barenaked-ladies-one-week",
+   "artist": "Barenaked Ladies",
+   "title": "One Week",
+   "low": 41,
+   "high": 53,
+   "difficulty": "hard",
+   "why": "Rap-speed verses on your lowest notes, then a sung chorus.",
+   "rated": [],
+   "yt": "fC_q9KPczAg"
+  },
+  {
+   "id": "bob-dylan-subterranean-homesick-blues",
+   "artist": "Bob Dylan",
+   "title": "Subterranean Homesick Blues",
+   "low": 54,
+   "high": 64,
+   "difficulty": "hard",
+   "why": "Non-stop fast lyrics with almost nowhere to breathe.",
+   "rated": [],
+   "yt": "MGxjIBEZvx0"
+  },
+  {
+   "id": "dire-straits-sultans-of-swing",
+   "artist": "Dire Straits",
+   "title": "Sultans of Swing",
+   "low": 43,
+   "high": 62,
+   "difficulty": "hard",
+   "why": "Long, dense verses over a wide span, sung against a busy band.",
+   "rated": [],
+   "yt": "h0ffIJ7ZO4U"
+  },
+  {
+   "id": "bobby-darin-mack-the-knife",
+   "artist": "Bobby Darin",
+   "title": "Mack the Knife",
+   "low": 50,
+   "high": 62,
+   "difficulty": "hard",
+   "why": "Swing timing and a key change up a step every verse.",
+   "rated": [],
+   "yt": "4jcCwmtVAIM"
+  },
+  {
+   "id": "crash-test-dummies-mmm-mmm-mmm-mmm",
+   "artist": "Crash Test Dummies",
+   "title": "Mmm Mmm Mmm Mmm",
+   "low": 43,
+   "high": 60,
+   "difficulty": "hard",
+   "why": "Long humming notes deep in your range; very demanding for a low voice.",
+   "rated": [
+    "30daysinger"
+   ],
+   "yt": "eTeg1txDv8w"
+  },
+  {
+   "id": "lou-reed-perfect-day",
+   "artist": "Lou Reed",
+   "title": "Perfect Day",
+   "low": 42,
+   "high": 60,
+   "difficulty": "hard",
+   "why": "Soft low verses, then a climb to your top notes in the \"reap\" section.",
+   "rated": [],
+   "yt": "9wxI4KK9ZYo"
+  },
+  {
+   "id": "james-taylor-fire-and-rain",
+   "artist": "James Taylor",
+   "title": "Fire and Rain",
+   "low": 43,
+   "high": 62,
+   "difficulty": "hard",
+   "why": "Uses your whole range, with long, exposed held notes.",
+   "rated": [],
+   "yt": "EbD7lfrsY2s"
+  }
+ ]
+}

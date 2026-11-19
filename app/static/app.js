@@ -1026,6 +1026,7 @@ route(/^\/$/, async () => {
         <label class="btn"><input type="file" id="upl" accept="audio/*,video/*" hidden>Upload an audio file</label>
         <span>Vocals get split from the music and the melody is worked out for you. A 4-minute song takes a few minutes.</span>
       </div>
+      <div class="small" style="margin-top:10px">Not sure what to sing? <a href="#/find">Find songs that suit your range →</a></div>
     </div>
     <div id="outdated"></div>
     <div id="list" class="songs"></div>`;
@@ -1109,6 +1110,78 @@ route(/^\/$/, async () => {
   await refresh();
   cleanup = () => clearTimeout(timer);
 }, 'songs');
+
+// ---- find songs: a researched list of songs, filtered by your saved range, easy ones first
+const DIFF_ORDER = { easy: 0, medium: 1, hard: 2 };
+const FIT_ORDER = { fits: 0, key: 1, stretch: 2, out: 3 };
+route(/^\/find$/, async () => {
+  const data = await api('/api/songbook');
+  const [lo, hi] = data.range;
+  let level = sessionStorage.getItem('vl-find-level') || 'all';
+  view.innerHTML = `
+    <h1>Find songs</h1>
+    <div class="card">
+      <div class="row"><span class="grow">Songs whose melody sits inside your range, <b>${noteName(lo)}–${noteName(hi)}</b>. Start with the easy ones; move up a level once they score well.</span>
+        <a class="btn" href="#/range">Change range</a></div>
+      <div class="small dim" style="margin-top:8px" id="startHere"></div>
+    </div>
+    <div class="row seg" id="levels" role="tablist">
+      ${['all', 'easy', 'medium', 'hard'].map(l => `<button data-l="${l}" role="tab">${l[0].toUpperCase() + l.slice(1)}</button>`).join('')}
+    </div>
+    <div id="list" class="songs"></div>
+    <details class="card" id="stretchBox"><summary></summary><div class="songs" id="stretch" style="margin-top:10px"></div></details>
+    <div class="card small dim" id="about"></div>`;
+  const shiftText = r => r.shift === 0 ? 'Fits your range as it is'
+    : `Fits with the music ${Math.abs(r.shift)} semitone${Math.abs(r.shift) > 1 ? 's' : ''} ${r.shift < 0 ? 'down' : 'up'} (set for you when you add it)`;
+  const ratedLinks = r => r.rated.map(k => data.sources[k] ? `<a href="${esc(data.sources[k].url)}" target="_blank" rel="noopener">${esc(data.sources[k].name.split(':')[0])}</a>` : '').filter(Boolean).join(', ');
+  const card = r => `
+    <div class="card song find" data-id="${esc(r.id)}">
+      <div class="grow">
+        <div class="title">${esc(r.title)} <span class="dim" style="font-weight:400">· ${esc(r.artist)}</span></div>
+        <div class="small"><span class="lvl ${r.difficulty}">${r.difficulty}</span>
+          <span class="dim">${noteName(r.low)}–${noteName(r.high)} · ${r.fit === 'stretch' || r.fit === 'out' ? `${r.outside} semitone${r.outside > 1 ? 's' : ''} outside your range${r.shift ? ` even ${Math.abs(r.shift)} ${r.shift < 0 ? 'down' : 'up'}` : ''}` : shiftText(r)}</span></div>
+        <div class="small" style="margin-top:4px">${esc(r.why)}${r.rated.length ? ` <span class="dim">Recommended by ${ratedLinks(r)}.</span>` : ''}</div>
+      </div>
+      <div class="actions">
+        <a class="btn" href="https://www.youtube.com/watch?v=${esc(r.yt)}" target="_blank" rel="noopener" title="Listen on YouTube">▶ YouTube</a>
+        ${r.song_id ? (r.status === 'ready' ? `<a class="btn primary" href="#/song/${r.song_id}">Sing</a>` : `<a class="pill ${esc(r.status)}" href="#/">${r.status === 'error' ? 'error, see Songs' : 'added · processing'}</a>`)
+          : `<button class="primary" data-add>Add to my songs</button>`}
+      </div>
+    </div>`;
+  const sortKey = r => [DIFF_ORDER[r.difficulty], FIT_ORDER[r.fit], Math.abs(r.shift), r.high - r.low];
+  const cmp = (a, b) => { const x = sortKey(a), y = sortKey(b); for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return x[i] - y[i]; return a.title.localeCompare(b.title); };
+  function draw() {
+    $('#levels').querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.l === level));
+    const pick = r => level === 'all' || r.difficulty === level;
+    const inside = data.songs.filter(r => (r.fit === 'fits' || r.fit === 'key') && pick(r)).sort(cmp);
+    const near = data.songs.filter(r => r.fit === 'stretch' && pick(r)).sort(cmp);
+    $('#list').innerHTML = inside.length ? inside.map(card).join('') : `<p class="dim">Nothing at this level fits ${noteName(lo)}–${noteName(hi)} yet. Check the songs just outside your range below, or widen your range on the Range page.</p>`;
+    $('#stretchBox').hidden = !near.length;
+    $('#stretchBox summary').textContent = `Just outside your range (${near.length}): try these as your range grows`;
+    $('#stretch').innerHTML = near.map(card).join('');
+    const first = data.songs.filter(r => r.difficulty === 'easy' && r.fit === 'fits' && !r.song_id).sort(cmp)[0]
+      || data.songs.filter(r => r.difficulty === 'easy' && r.fit === 'key' && !r.song_id).sort(cmp)[0];
+    $('#startHere').innerHTML = first ? `Start here: <b>${esc(first.title)}</b> by ${esc(first.artist)} (${esc(first.why.split(';')[0].replace(/\.$/, ''))}).` : '';
+  }
+  $('#about').innerHTML = `<b>How the levels are set.</b> ${Object.entries(data.levels).map(([k, v]) => `<span class="lvl ${k}">${k}</span> ${esc(v)}`).join(' ')}
+    <p>${esc(data.note)} Each song's difficulty is our rating from its range, tempo and phrasing, checked against these lists: ${Object.values(data.sources).map(s => `<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.name)}</a>`).join(' · ')}.
+    Music shifted more than ${data.max_shift} semitones starts to sound odd, so songs that would need more are left out.</p>`;
+  $('#levels').onclick = e => { const b = e.target.closest('button'); if (!b) return; level = b.dataset.l; try { sessionStorage.setItem('vl-find-level', level); } catch { /* ignore */ } draw(); };
+  view.onclick = async e => {
+    const btn = e.target.closest('[data-add]'); if (!btn) return;
+    const id = btn.closest('.find').dataset.id, r = data.songs.find(x => x.id === id);
+    btn.disabled = true; btn.textContent = 'Adding…';
+    try {
+      const song = await api(`/api/songbook/${encodeURIComponent(id)}/add`, { method: 'POST' });
+      if (song.suggested_tr) setSongPref(song.id, 'tr', String(song.suggested_tr));
+      r.song_id = song.id; r.status = song.status;
+      toast(song.existing ? 'Already in your songs' : `Added. It takes a few minutes to split the vocals; it’ll show on Songs.`);
+    } catch (err) { toast(err.message); btn.disabled = false; btn.textContent = 'Add to my songs'; return; }
+    draw();
+  };
+  draw();
+  cleanup = () => { view.onclick = null; };
+}, 'find');
 
 function fitHint(song, s) {
   if (song.note_low == null) return '';
@@ -1357,7 +1430,7 @@ route(/^\/song\/([0-9a-f]{12})(?:\?lesson=(\d\.\d))?$/, async (id, lessonId) => 
   // What you sing = melody or a harmony line, moved by the music's key shift, then by whole octaves.
   let key = an.key || null;
   let part = songPref(id, 'part', 'melody'); if (!PARTS[part]) part = 'melody';
-  let tr = Number(songPref(id, 'tr', '0')) || 0;
+  let tr = Number(songPref(id, 'tr', String(song.suggested_tr || 0))) || 0;   // songbook picks come with a key that fits your range
   let speed = Number(songPref(id, 'speed', '100')); if (!SPEEDS.includes(speed)) speed = 100;
   let autoShift = 0;
   const trLabel = n => n === 0 ? 'Original key' : `${n > 0 ? '+' : '−'}${Math.abs(n)} semitone${Math.abs(n) > 1 ? 's' : ''}${key ? ` (${keyName({ ...key, tonic: key.tonic + n })})` : ''}`;

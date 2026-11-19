@@ -210,7 +210,84 @@ def song(song_id: str):
     s = db.get_song(song_id)
     if not s:
         raise HTTPException(404, "No such song")
+    tr = (db.get_kv("songbook-tr", {}) or {}).get(song_id)
+    if tr:
+        s = {**s, "suggested_tr": tr}
     return s
+
+
+# --------------------------------------------------------------------------
+# songbook: songs picked for a voice range, with a difficulty rating
+# --------------------------------------------------------------------------
+
+SONGBOOK = Path(__file__).parent / "songbook.json"
+MAX_KEY_SHIFT = 5          # further than this and the shifted music starts to sound odd
+YT_ID_RE = re.compile(r"(?:v=|youtu\.be/|/shorts/|/embed/)([A-Za-z0-9_-]{11})")
+_songbook_cache: tuple[float, dict] | None = None
+
+
+def _songbook():
+    global _songbook_cache
+    mt = SONGBOOK.stat().st_mtime
+    if not _songbook_cache or _songbook_cache[0] != mt:
+        _songbook_cache = (mt, json.loads(SONGBOOK.read_text()))
+    return _songbook_cache[1]
+
+
+def songbook_fit(lo, hi, rlo, rhi):
+    """Smallest key shift (semitones, within ±MAX_KEY_SHIFT) that puts lo..hi inside rlo..rhi.
+    Ties go downwards. Returns (shift, kind, semitones still outside)."""
+    order = sorted(range(-MAX_KEY_SHIFT, MAX_KEY_SHIFT + 1), key=lambda t: (abs(t), t > 0))
+    outside = lambda t: max(0, rlo - (lo + t)) + max(0, (hi + t) - rhi)
+    t = min(order, key=lambda t: (outside(t), order.index(t)))
+    miss = outside(t)
+    kind = "fits" if miss == 0 and t == 0 else "key" if miss == 0 else "stretch" if miss <= 2 else "out"
+    return t, kind, miss
+
+
+def _library_by_video():
+    out = {}
+    for r in db.list_songs():
+        m = YT_ID_RE.search(r.get("source") or "")
+        if m:
+            out.setdefault(m.group(1), r)
+    return out
+
+
+@app.get("/api/songbook")
+def songbook():
+    book = _songbook()
+    st = db.get_settings()
+    rlo, rhi = st["rangeLow"], st["rangeHigh"]
+    lib = _library_by_video()
+    rows = []
+    for s in book["songs"]:
+        t, kind, miss = songbook_fit(s["low"], s["high"], rlo, rhi)
+        have = lib.get(s["yt"])
+        rows.append({**s, "shift": t, "fit": kind, "outside": miss,
+                     "song_id": have["id"] if have else None, "status": have["status"] if have else None})
+    return {"range": [rlo, rhi], "max_shift": MAX_KEY_SHIFT, "note": book.get("note"),
+            "sources": book.get("sources", {}), "levels": book.get("levels", {}), "songs": rows}
+
+
+@app.post("/api/songbook/{book_id}/add")
+def songbook_add(book_id: str):
+    s = next((x for x in _songbook()["songs"] if x["id"] == book_id), None)
+    if not s:
+        raise HTTPException(404, "That song isn't in the list")
+    have = _library_by_video().get(s["yt"])
+    if have:
+        return {**have, "existing": True}
+    st = db.get_settings()
+    t, kind, _ = songbook_fit(s["low"], s["high"], st["rangeLow"], st["rangeHigh"])
+    song_id = uuid.uuid4().hex[:12]
+    db.add_song(song_id, f"{s['artist']} – {s['title']}", f"https://www.youtube.com/watch?v={s['yt']}")
+    if t and kind in ("key", "stretch"):
+        trs = db.get_kv("songbook-tr", {}) or {}
+        trs[song_id] = t
+        db.put_kv("songbook-tr", trs)
+    pipeline.enqueue(song_id, {"url": f"https://www.youtube.com/watch?v={s['yt']}"})
+    return {**db.get_song(song_id), "suggested_tr": t if kind in ("key", "stretch") else 0}
 
 
 @app.patch("/api/songs/{song_id}")
