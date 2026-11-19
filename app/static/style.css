@@ -196,3 +196,5 @@ canvas.vrp { width: 100%; height: 240px; display: block; background: rgba(0,0,0,
 .lvl.easy { color: var(--green); } .lvl.medium { color: var(--amber); } .lvl.hard { color: var(--red); }
 #stretchBox summary { cursor: pointer; color: var(--dim); }
 #about p { margin: 8px 0 0; }
+.find .actions { flex-wrap: wrap; justify-content: flex-end; }
+.find .actions button, .find .actions .btn { white-space: nowrap; }

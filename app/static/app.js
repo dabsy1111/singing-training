@@ -1121,7 +1121,7 @@ route(/^\/find$/, async () => {
   view.innerHTML = `
     <h1>Find songs</h1>
     <div class="card">
-      <div class="row"><span class="grow">Songs whose melody sits inside your range, <b>${noteName(lo)}–${noteName(hi)}</b>. Start with the easy ones; move up a level once they score well.</span>
+      <div class="row"><span class="grow">Songs whose melody sits inside your range, <b>${noteName(lo)}–${noteName(hi)}</b>. Start with the easy ones; move up a level once they score well. Each one comes as a part to learn (a verse and chorus, about a minute), or add the whole song.</span>
         <a class="btn" href="#/range">Change range</a></div>
       <div class="small dim" style="margin-top:8px" id="startHere"></div>
     </div>
@@ -1140,14 +1140,17 @@ route(/^\/find$/, async () => {
         <div class="title">${esc(r.title)} <span class="dim" style="font-weight:400">· ${esc(r.artist)}</span></div>
         <div class="small"><span class="lvl ${r.difficulty}">${r.difficulty}</span>
           <span class="dim">${noteName(r.low)}–${noteName(r.high)} · ${r.fit === 'stretch' || r.fit === 'out' ? `${r.outside} semitone${r.outside > 1 ? 's' : ''} outside your range${r.shift ? ` even ${Math.abs(r.shift)} ${r.shift < 0 ? 'down' : 'up'}` : ''}` : shiftText(r)}</span></div>
+        ${r.part && !r.song_id ? `<div class="small dim">Part to learn: ${esc(r.part.label.toLowerCase())}, about ${fmtTime(partLen(r))}${r.duration ? ` of ${fmtTime(r.duration)}` : ''}</div>` : ''}
         <div class="small" style="margin-top:4px">${esc(r.why)}${r.rated.length ? ` <span class="dim">Recommended by ${ratedLinks(r)}.</span>` : ''}</div>
       </div>
       <div class="actions">
         <a class="btn" href="https://www.youtube.com/watch?v=${esc(r.yt)}" target="_blank" rel="noopener" title="Listen on YouTube">▶ YouTube</a>
         ${r.song_id ? (r.status === 'ready' ? `<a class="btn primary" href="#/song/${r.song_id}">Sing</a>` : `<a class="pill ${esc(r.status)}" href="#/">${r.status === 'error' ? 'error, see Songs' : 'added · processing'}</a>`)
+          : r.part ? `<button class="primary" data-add title="${esc(r.part.label)}">Add part (${fmtTime(partLen(r))})</button><button data-add="whole" title="The whole track${r.duration ? `, ${fmtTime(r.duration)}` : ''}">Whole song</button>`
           : `<button class="primary" data-add>Add to my songs</button>`}
       </div>
     </div>`;
+  const partLen = r => Math.round(r.part.end - r.part.start + 5);   // plus the lead-in and tail the server keeps
   const sortKey = r => [DIFF_ORDER[r.difficulty], FIT_ORDER[r.fit], Math.abs(r.shift), r.high - r.low];
   const cmp = (a, b) => { const x = sortKey(a), y = sortKey(b); for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return x[i] - y[i]; return a.title.localeCompare(b.title); };
   function draw() {
@@ -1170,13 +1173,14 @@ route(/^\/find$/, async () => {
   view.onclick = async e => {
     const btn = e.target.closest('[data-add]'); if (!btn) return;
     const id = btn.closest('.find').dataset.id, r = data.songs.find(x => x.id === id);
-    btn.disabled = true; btn.textContent = 'Adding…';
+    const whole = btn.dataset.add === 'whole', label = btn.textContent;
+    btn.closest('.actions').querySelectorAll('[data-add]').forEach(b => { b.disabled = true; }); btn.textContent = 'Adding…';
     try {
-      const song = await api(`/api/songbook/${encodeURIComponent(id)}/add`, { method: 'POST' });
+      const song = await api(`/api/songbook/${encodeURIComponent(id)}/add`, { method: 'POST', json: { whole } });
       if (song.suggested_tr) setSongPref(song.id, 'tr', String(song.suggested_tr));
       r.song_id = song.id; r.status = song.status;
       toast(song.existing ? 'Already in your songs' : `Added. It takes a few minutes to split the vocals; it’ll show on Songs.`);
-    } catch (err) { toast(err.message); btn.disabled = false; btn.textContent = 'Add to my songs'; return; }
+    } catch (err) { toast(err.message); btn.closest('.actions').querySelectorAll('[data-add]').forEach(b => { b.disabled = false; }); btn.textContent = label; return; }
     draw();
   };
   draw();

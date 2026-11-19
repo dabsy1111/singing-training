@@ -1,5 +1,5 @@
 {
- "version": 1,
+ "version": 2,
  "note": "Melody ranges from the Singing Carrots song database (singingcarrots.com, user-submitted). Vocal Lab checks the real notes once a song is added.",
  "sources": {
   "singingcarrots": {
@@ -44,7 +44,15 @@
    "rated": [
     "30daysinger"
    ],
-   "yt": "7G2-FPlvY58"
+   "yt": "7G2-FPlvY58",
+   "part": {
+    "label": "Opening refrain and the first two verses",
+    "start": 49.6,
+    "end": 109.97,
+    "lrclib": 7278688,
+    "lrc_duration": 429.0
+   },
+   "duration": 436
   },
   {
    "id": "lou-reed-walk-on-the-wild-side",
@@ -55,7 +63,15 @@
    "difficulty": "easy",
    "why": "Half-spoken verses over one octave; the \"doo, da-doo\" hook is the only real tune.",
    "rated": [],
-   "yt": "oG6fayQBm9w"
+   "yt": "oG6fayQBm9w",
+   "part": {
+    "label": "First two verses, each with the chorus",
+    "start": 19.59,
+    "end": 74.58,
+    "lrclib": 18113974,
+    "lrc_duration": 252.0
+   },
+   "duration": 255
   },
   {
    "id": "johnny-cash-hurt",
@@ -68,7 +84,15 @@
    "rated": [
     "musicianwave"
    ],
-   "yt": "8AHCfZTRGiI"
+   "yt": "8AHCfZTRGiI",
+   "part": {
+    "label": "First verse and chorus",
+    "start": 12.88,
+    "end": 100.65,
+    "lrclib": 14085045,
+    "lrc_duration": 216.533333
+   },
+   "duration": 229
   },
   {
    "id": "george-ezra-budapest",
@@ -79,7 +103,15 @@
    "difficulty": "easy",
    "why": "One octave, a bouncy repeated chorus and no leaps.",
    "rated": [],
-   "yt": "VHrLPs3_1Fs"
+   "yt": "VHrLPs3_1Fs",
+   "part": {
+    "label": "First verse and chorus",
+    "start": 7.79,
+    "end": 60.35,
+    "lrclib": 7517102,
+    "lrc_duration": 201.0
+   },
+   "duration": 217
   },
   {
    "id": "elvis-presley-love-me-tender",
@@ -90,7 +122,15 @@
    "difficulty": "easy",
    "why": "Slow, stepwise melody; good for practising smooth, held notes.",
    "rated": [],
-   "yt": "-9dtQzg7gDM"
+   "yt": "-9dtQzg7gDM",
+   "part": {
+    "label": "First verse and chorus",
+    "start": 3.54,
+    "end": 54.15,
+    "lrclib": 17430609,
+    "lrc_duration": 163.866122
+   },
+   "duration": 162
   },
   {
    "id": "elvis-presley-in-the-ghetto",
@@ -101,7 +141,15 @@
    "difficulty": "easy",
    "why": "Storytelling verses on a narrow tune; the chorus repeats the verse shape.",
    "rated": [],
-   "yt": "FJ-r0bilzhU"
+   "yt": "FJ-r0bilzhU",
+   "part": {
+    "label": "First two verses",
+    "start": 5.26,
+    "end": 61.87,
+    "lrclib": 8416455,
+    "lrc_duration": 167.0
+   },
+   "duration": 179
   },
   {
    "id": "bob-dylan-make-you-feel-my-love",
@@ -112,7 +160,15 @@
    "difficulty": "easy",
    "why": "Slow ballad, small steps, lots of space to breathe between lines.",
    "rated": [],
-   "yt": "fdWto-AUM3Q"
+   "yt": "fdWto-AUM3Q",
+   "part": {
+    "label": "First two verses",
+    "start": 6.31,
+    "end": 59.12,
+    "lrclib": 5299048,
+    "lrc_duration": 214.0
+   },
+   "duration": 213
   },
   {
    "id": "bob-dylan-blowin-in-the-wind",
@@ -125,7 +181,15 @@
    "rated": [
     "musicianwave"
    ],
-   "yt": "MMFj8uDubsE"
+   "yt": "MMFj8uDubsE",
+   "part": {
+    "label": "First verse and refrain",
+    "start": 3.78,
+    "end": 49.12,
+    "lrclib": 7470104,
+    "lrc_duration": 166.0
+   },
+   "duration": 171
   },
   {
    "id": "gary-jules-mad-world",
@@ -138,7 +202,15 @@
    "rated": [
     "emastered"
    ],
-   "yt": "etSbOs3aUqI"
+   "yt": "etSbOs3aUqI",
+   "part": {
+    "label": "First two verses and chorus",
+    "start": 10.52,
+    "end": 88.98,
+    "lrclib": 437468,
+    "lrc_duration": 184.0
+   },
+   "duration": 190
   },
   {
    "id": "the-church-under-the-milky-way",
@@ -149,7 +221,15 @@
    "difficulty": "easy",
    "why": "One octave in a relaxed baritone; the chorus repeats.",
    "rated": [],
-   "yt": "pWxJEIz7sSA"
+   "yt": "pWxJEIz7sSA",
+   "part": {
+    "label": "First two verses and chorus",
+    "start": 14.87,
+    "end": 92.75,
+    "lrclib": 7464201,
+    "lrc_duration": 298.0
+   },
+   "duration": 302
   },
   {
    "id": "iggy-pop-the-passenger",
@@ -160,7 +240,15 @@
    "difficulty": "easy",
    "why": "Under an octave, steady rhythm, and a \"la la la\" chorus.",
    "rated": [],
-   "yt": "-fWw7FE9tTo"
+   "yt": "-fWw7FE9tTo",
+   "part": {
+    "label": "First two verses and the \"la la la\" chorus",
+    "start": 15.91,
+    "end": 94.8,
+    "lrclib": 7301599,
+    "lrc_duration": 281.0
+   },
+   "duration": 285
   },
   {
    "id": "joy-division-love-will-tear-us-apart",
@@ -171,7 +259,15 @@
    "difficulty": "easy",
    "why": "Low, narrow and repetitive; mostly about rhythm.",
    "rated": [],
-   "yt": "zuuObGsB0No"
+   "yt": "zuuObGsB0No",
+   "part": {
+    "label": "First verse and chorus",
+    "start": 28.46,
+    "end": 64.08,
+    "lrclib": 7166866,
+    "lrc_duration": 207.0
+   },
+   "duration": 211
   },
   {
    "id": "snow-patrol-chasing-cars",
@@ -186,7 +282,15 @@
     "emastered",
     "zinginstruments"
    ],
-   "yt": "GemKqzILV4w"
+   "yt": "GemKqzILV4w",
+   "part": {
+    "label": "First verse and chorus",
+    "start": 2.77,
+    "end": 55.03,
+    "lrclib": 7359116,
+    "lrc_duration": 221.0
+   },
+   "duration": 222
   },
   {
    "id": "sting-fields-of-gold",
@@ -199,7 +303,15 @@
    "rated": [
     "musicianwave"
    ],
-   "yt": "KLVq0IAzh1A"
+   "yt": "KLVq0IAzh1A",
+   "part": {
+    "label": "First three verses",
+    "start": 18.22,
+    "end": 83.2,
+    "lrclib": 7226879,
+    "lrc_duration": 220.0
+   },
+   "duration": 218
   },
   {
    "id": "r-e-m-losing-my-religion",
@@ -213,7 +325,15 @@
     "musicianwave",
     "gigwise"
    ],
-   "yt": "xwtdhWltSIg"
+   "yt": "xwtdhWltSIg",
+   "part": {
+    "label": "First verse and chorus",
+    "start": 14.54,
+    "end": 71.71,
+    "lrclib": 33515113,
+    "lrc_duration": 268.0
+   },
+   "duration": 294
   },
   {
    "id": "paul-kelly-from-little-things-big-things-grow",
@@ -224,7 +344,15 @@
    "difficulty": "easy",
    "why": "One octave, a story told over the same simple verse tune.",
    "rated": [],
-   "yt": "6_ndC07C2qw"
+   "yt": "6_ndC07C2qw",
+   "part": {
+    "label": "First two verses and chorus",
+    "start": 17.23,
+    "end": 66.56,
+    "lrclib": 30281165,
+    "lrc_duration": 412.0
+   },
+   "duration": 413
   },
   {
    "id": "america-a-horse-with-no-name",
@@ -235,7 +363,15 @@
    "difficulty": "easy",
    "why": "Two chords, a tiny range and a \"la la\" chorus.",
    "rated": [],
-   "yt": "na47wMFfQCo"
+   "yt": "na47wMFfQCo",
+   "part": {
+    "label": "First verse, chorus and \"la la\"",
+    "start": 8.15,
+    "end": 69.52,
+    "lrclib": 33612125,
+    "lrc_duration": 252.0
+   },
+   "duration": 252
   },
   {
    "id": "kenny-rogers-lucille",
@@ -246,7 +382,15 @@
    "difficulty": "easy",
    "why": "Narrow and conversational; the chorus is the easiest part.",
    "rated": [],
-   "yt": "kulJsH8v0ok"
+   "yt": "kulJsH8v0ok",
+   "part": {
+    "label": "Second verse and chorus",
+    "start": 54.55,
+    "end": 120.49,
+    "lrclib": 7860518,
+    "lrc_duration": 216.0
+   },
+   "duration": 219
   },
   {
    "id": "randy-travis-forever-and-ever-amen",
@@ -257,7 +401,15 @@
    "difficulty": "easy",
    "why": "Low country baritone, narrow and repetitive.",
    "rated": [],
-   "yt": "KtKXc_v2iLE"
+   "yt": "KtKXc_v2iLE",
+   "part": {
+    "label": "First verse and chorus",
+    "start": 5.9,
+    "end": 58.9,
+    "lrclib": 12649368,
+    "lrc_duration": 215.0
+   },
+   "duration": 215
   },
   {
    "id": "willie-nelson-always-on-my-mind",
@@ -268,7 +420,15 @@
    "difficulty": "easy",
    "why": "Slow, gentle, small range; good for soft singing.",
    "rated": [],
-   "yt": "R7f189Z0v0Y"
+   "yt": "R7f189Z0v0Y",
+   "part": {
+    "label": "First verse and chorus",
+    "start": 8.59,
+    "end": 60.6,
+    "lrclib": 7260243,
+    "lrc_duration": 213.0
+   },
+   "duration": 217
   },
   {
    "id": "jack-johnson-better-together",
@@ -279,7 +439,15 @@
    "difficulty": "easy",
    "why": "Laid-back, quiet, mostly stepwise.",
    "rated": [],
-   "yt": "seZMOTGCDag"
+   "yt": "seZMOTGCDag",
+   "part": {
+    "label": "First verse and chorus",
+    "start": 8.85,
+    "end": 65.45,
+    "lrclib": 37852627,
+    "lrc_duration": 209.0
+   },
+   "duration": 261
   },
   {
    "id": "green-day-boulevard-of-broken-dreams",
@@ -290,7 +458,15 @@
    "difficulty": "easy",
    "why": "One octave and a steady beat; the chorus repeats.",
    "rated": [],
-   "yt": "hBvJyi3fbtA"
+   "yt": "hBvJyi3fbtA",
+   "part": {
+    "label": "First verse and chorus",
+    "start": 37.8,
+    "end": 101.23,
+    "lrclib": 7174797,
+    "lrc_duration": 288.0
+   },
+   "duration": 261
   },
   {
    "id": "eric-clapton-wonderful-tonight",
@@ -301,7 +477,15 @@
    "difficulty": "easy",
    "why": "Slow and simple; good for long, even notes.",
    "rated": [],
-   "yt": "fxAiUq8yn34"
+   "yt": "fxAiUq8yn34",
+   "part": {
+    "label": "First verse",
+    "start": 21.31,
+    "end": 62.66,
+    "lrclib": 8018968,
+    "lrc_duration": 219.0
+   },
+   "duration": 223
   },
   {
    "id": "slim-dusty-duncan",
@@ -312,7 +496,15 @@
    "difficulty": "easy",
    "why": "Pub sing-along: one octave, four lines, round and round.",
    "rated": [],
-   "yt": "hOML9zwoZn0"
+   "yt": "hOML9zwoZn0",
+   "part": {
+    "label": "First two verses",
+    "start": 12.22,
+    "end": 57.77,
+    "lrclib": 9038289,
+    "lrc_duration": 154.866
+   },
+   "duration": 153
   },
   {
    "id": "johnny-cash-folsom-prison-blues",
@@ -323,7 +515,15 @@
    "difficulty": "medium",
    "why": "Uses your whole range, bottom note to top, at a brisk shuffle.",
    "rated": [],
-   "yt": "AeZRYhLDLeU"
+   "yt": "AeZRYhLDLeU",
+   "part": {
+    "label": "First two verses",
+    "start": 5.26,
+    "end": 61.01,
+    "lrclib": 7048223,
+    "lrc_duration": 167.0
+   },
+   "duration": 163
   },
   {
    "id": "johnny-cash-ghost-riders-in-the-sky",
@@ -334,7 +534,15 @@
    "difficulty": "medium",
    "why": "Sits right on your lowest notes; the \"yippie-yi-ay\" needs a steady, full tone.",
    "rated": [],
-   "yt": "rGRsATIVI8Y"
+   "yt": "rGRsATIVI8Y",
+   "part": {
+    "label": "First two verses and the \"yippie-yi-yay\" chorus",
+    "start": 11.21,
+    "end": 88.83,
+    "lrclib": 7473984,
+    "lrc_duration": 222.0
+   },
+   "duration": 227
   },
   {
    "id": "nick-cave-the-bad-seeds-red-right-hand",
@@ -347,7 +555,15 @@
    "rated": [
     "30daysinger"
    ],
-   "yt": "YUNFgN-Lh6c"
+   "yt": "YUNFgN-Lh6c",
+   "part": {
+    "label": "Second verse up to the \"red right hand\" line",
+    "start": 49.52,
+    "end": 115.96,
+    "lrclib": 7186995,
+    "lrc_duration": 370.0
+   },
+   "duration": 371
   },
   {
    "id": "paul-kelly-dumb-things",
@@ -358,7 +574,15 @@
    "difficulty": "medium",
    "why": "Quick, wordy lines over a wider range.",
    "rated": [],
-   "yt": "ZR-eTR3Dcps"
+   "yt": "ZR-eTR3Dcps",
+   "part": {
+    "label": "First two verses and choruses",
+    "start": 19.09,
+    "end": 84.97,
+    "lrclib": 5769261,
+    "lrc_duration": 150.0
+   },
+   "duration": 161
   },
   {
    "id": "paul-kelly-how-to-make-gravy",
@@ -369,7 +593,15 @@
    "difficulty": "medium",
    "why": "Long, talky verses that climb in the chorus.",
    "rated": [],
-   "yt": "iYqIF2XkqKU"
+   "yt": "iYqIF2XkqKU",
+   "part": {
+    "label": "First two verses and the gravy chorus",
+    "start": 22.61,
+    "end": 114.77,
+    "lrclib": 5026516,
+    "lrc_duration": 269.0
+   },
+   "duration": 275
   },
   {
    "id": "the-whitlams-no-aphrodisiac",
@@ -380,7 +612,15 @@
    "difficulty": "medium",
    "why": "Long song with lots of words and a build to the top of the range.",
    "rated": [],
-   "yt": "8qi7SlM1eDk"
+   "yt": "8qi7SlM1eDk",
+   "part": {
+    "label": "First two verses and choruses",
+    "start": 3.79,
+    "end": 85.51,
+    "lrclib": 6155741,
+    "lrc_duration": 259.0
+   },
+   "duration": 263
   },
   {
    "id": "bill-withers-lean-on-me",
@@ -391,7 +631,15 @@
    "difficulty": "medium",
    "why": "Simple tune but a wide span, and the \"call me\" lines move fast.",
    "rated": [],
-   "yt": "gOZgo8gMIoM"
+   "yt": "gOZgo8gMIoM",
+   "part": {
+    "label": "Opening hum, first verse and chorus",
+    "start": 15.82,
+    "end": 79.4,
+    "lrclib": 7293429,
+    "lrc_duration": 257.0
+   },
+   "duration": 261
   },
   {
    "id": "frank-sinatra-strangers-in-the-night",
@@ -402,7 +650,15 @@
    "difficulty": "medium",
    "why": "Long, held crooner phrases; breath control matters.",
    "rated": [],
-   "yt": "Sek1vLw3s20"
+   "yt": "Sek1vLw3s20",
+   "part": {
+    "label": "First half of the song",
+    "start": 11.02,
+    "end": 76.04,
+    "lrclib": 26450779,
+    "lrc_duration": 156.8914289
+   },
+   "duration": 165
   },
   {
    "id": "kenny-rogers-the-gambler",
@@ -413,7 +669,15 @@
    "difficulty": "medium",
    "why": "Story verses then a chorus that jumps up.",
    "rated": [],
-   "yt": "7hx4gdlfamo"
+   "yt": "7hx4gdlfamo",
+   "part": {
+    "label": "Third verse and chorus",
+    "start": 49.21,
+    "end": 97.12,
+    "lrclib": 7021742,
+    "lrc_duration": 211.0
+   },
+   "duration": 211
   },
   {
    "id": "steve-earle-copperhead-road",
@@ -424,7 +688,15 @@
    "difficulty": "medium",
    "why": "Lots of words, half-shouted, at a driving tempo.",
    "rated": [],
-   "yt": "xvaEJzoaYZk"
+   "yt": "xvaEJzoaYZk",
+   "part": {
+    "label": "First verse and refrain",
+    "start": 39.95,
+    "end": 94.17,
+    "lrclib": 7830880,
+    "lrc_duration": 270.0
+   },
+   "duration": 270
   },
   {
    "id": "tennessee-ernie-ford-sixteen-tons",
@@ -435,7 +707,15 @@
    "difficulty": "medium",
    "why": "Deep, round tone across a wide span; swing timing.",
    "rated": [],
-   "yt": "ZaWVzUc7FpE"
+   "yt": "ZaWVzUc7FpE",
+   "part": {
+    "label": "First two verses and choruses",
+    "start": 4.83,
+    "end": 71.16,
+    "lrclib": 7880756,
+    "lrc_duration": 156.0
+   },
+   "duration": 165
   },
   {
    "id": "creedence-clearwater-revival-proud-mary",
@@ -446,7 +726,15 @@
    "difficulty": "medium",
    "why": "Gritty rock voice and a jump into the chorus.",
    "rated": [],
-   "yt": "_MqKttEyYKc"
+   "yt": "_MqKttEyYKc",
+   "part": {
+    "label": "First two verses and choruses",
+    "start": 5.71,
+    "end": 78.27,
+    "lrclib": 7297253,
+    "lrc_duration": 189.0
+   },
+   "duration": 190
   },
   {
    "id": "cat-stevens-wild-world",
@@ -457,7 +745,15 @@
    "difficulty": "medium",
    "why": "Chorus climbs, with a held top note.",
    "rated": [],
-   "yt": "-xLfxNuW-xo"
+   "yt": "-xLfxNuW-xo",
+   "part": {
+    "label": "First verse and chorus",
+    "start": 14.6,
+    "end": 60.07,
+    "lrclib": 7212148,
+    "lrc_duration": 200.0
+   },
+   "duration": 204
   },
   {
    "id": "gordon-lightfoot-if-you-could-read-my-mind",
@@ -468,7 +764,15 @@
    "difficulty": "medium",
    "why": "Narrow, but very long lines with few places to breathe.",
    "rated": [],
-   "yt": "s0TK8eyydCU"
+   "yt": "s0TK8eyydCU",
+   "part": {
+    "label": "First two verses",
+    "start": 8.82,
+    "end": 90.72,
+    "lrclib": 7291429,
+    "lrc_duration": 229.0
+   },
+   "duration": 232
   },
   {
    "id": "dire-straits-brothers-in-arms",
@@ -479,7 +783,15 @@
    "difficulty": "medium",
    "why": "Very low, slow and quiet; your bottom notes need to stay in tune.",
    "rated": [],
-   "yt": "jhdFe3evXpk"
+   "yt": "jhdFe3evXpk",
+   "part": {
+    "label": "First verse and refrain",
+    "start": 67.5,
+    "end": 116.09,
+    "lrclib": 12897838,
+    "lrc_duration": 420.0
+   },
+   "duration": 299
   },
   {
    "id": "nirvana-the-man-who-sold-the-world",
@@ -490,7 +802,15 @@
    "difficulty": "medium",
    "why": "Unplugged version; odd intervals and a held top note.",
    "rated": [],
-   "yt": "fregObNcHC8"
+   "yt": "fregObNcHC8",
+   "part": {
+    "label": "First verse and chorus",
+    "start": 15.97,
+    "end": 70.58,
+    "lrclib": 7183183,
+    "lrc_duration": 233.0
+   },
+   "duration": 218
   },
   {
    "id": "the-clash-should-i-stay-or-should-i-go",
@@ -501,7 +821,15 @@
    "difficulty": "medium",
    "why": "Shouty energy and quick switches between verse and chorus.",
    "rated": [],
-   "yt": "BN1WwnEDWAM"
+   "yt": "BN1WwnEDWAM",
+   "part": {
+    "label": "First two verses and choruses",
+    "start": 10.88,
+    "end": 74.36,
+    "lrclib": 37692821,
+    "lrc_duration": 189.0
+   },
+   "duration": 190
   },
   {
    "id": "harry-belafonte-day-o-the-banana-boat-song",
@@ -512,7 +840,15 @@
    "difficulty": "medium",
    "why": "Long called-out \"Day-O\" notes and call-and-answer timing.",
    "rated": [],
-   "yt": "oKD_PfCQx9A"
+   "yt": "oKD_PfCQx9A",
+   "part": {
+    "label": "Opening calls and first verses",
+    "start": 3.61,
+    "end": 61.61,
+    "lrclib": 5676483,
+    "lrc_duration": 190.0
+   },
+   "duration": 187
   },
   {
    "id": "pearl-jam-just-breathe",
@@ -523,7 +859,15 @@
    "difficulty": "medium",
    "why": "Gentle, but covers almost your whole range.",
    "rated": [],
-   "yt": "XTb9GNIxpMk"
+   "yt": "XTb9GNIxpMk",
+   "part": {
+    "label": "First two verses and chorus",
+    "start": 17.59,
+    "end": 74.0,
+    "lrclib": 5473302,
+    "lrc_duration": 233.0
+   },
+   "duration": 226
   },
   {
    "id": "jim-croce-time-in-a-bottle",
@@ -534,7 +878,15 @@
    "difficulty": "medium",
    "why": "Lilting 3/4 melody with jumps and long phrases.",
    "rated": [],
-   "yt": "Q29sOLG8xGE"
+   "yt": "Q29sOLG8xGE",
+   "part": {
+    "label": "First two verses and chorus",
+    "start": 10.41,
+    "end": 75.58,
+    "lrclib": 7891250,
+    "lrc_duration": 149.0
+   },
+   "duration": 147
   },
   {
    "id": "leonard-cohen-everybody-knows",
@@ -545,7 +897,15 @@
    "difficulty": "medium",
    "why": "Low, wordy and steady; holding pitch while half-speaking is the skill.",
    "rated": [],
-   "yt": "Gxd23UVID7k"
+   "yt": "Gxd23UVID7k",
+   "part": {
+    "label": "First two verses",
+    "start": 8.25,
+    "end": 81.79,
+    "lrclib": 7735575,
+    "lrc_duration": 335.0
+   },
+   "duration": 338
   },
   {
    "id": "johnny-cash-ive-been-everywhere",
@@ -556,7 +916,15 @@
    "difficulty": "hard",
    "why": "Narrow range but a rapid list of place names: breath and diction at speed.",
    "rated": [],
-   "yt": "sVHOMq3CWxA"
+   "yt": "sVHOMq3CWxA",
+   "part": {
+    "label": "Opening verse, chorus and the first list of places",
+    "start": 1.61,
+    "end": 72.52,
+    "lrclib": 7409614,
+    "lrc_duration": 198.0
+   },
+   "duration": 198
   },
   {
    "id": "barenaked-ladies-one-week",
@@ -567,7 +935,15 @@
    "difficulty": "hard",
    "why": "Rap-speed verses on your lowest notes, then a sung chorus.",
    "rated": [],
-   "yt": "fC_q9KPczAg"
+   "yt": "fC_q9KPczAg",
+   "part": {
+    "label": "Opening chorus and the first rap verse",
+    "start": 0.45,
+    "end": 56.16,
+    "lrclib": 7509746,
+    "lrc_duration": 170.0
+   },
+   "duration": 175
   },
   {
    "id": "bob-dylan-subterranean-homesick-blues",
@@ -578,7 +954,15 @@
    "difficulty": "hard",
    "why": "Non-stop fast lyrics with almost nowhere to breathe.",
    "rated": [],
-   "yt": "MGxjIBEZvx0"
+   "yt": "MGxjIBEZvx0",
+   "part": {
+    "label": "First two verses",
+    "start": 8.94,
+    "end": 68.93,
+    "lrclib": 8002034,
+    "lrc_duration": 138.0
+   },
+   "duration": 136
   },
   {
    "id": "dire-straits-sultans-of-swing",
@@ -589,7 +973,15 @@
    "difficulty": "hard",
    "why": "Long, dense verses over a wide span, sung against a busy band.",
    "rated": [],
-   "yt": "h0ffIJ7ZO4U"
+   "yt": "h0ffIJ7ZO4U",
+   "part": {
+    "label": "First two verses and \"way on down south\"",
+    "start": 13.07,
+    "end": 80.33,
+    "lrclib": 7053590,
+    "lrc_duration": 349.0
+   },
+   "duration": 267
   },
   {
    "id": "bobby-darin-mack-the-knife",
@@ -600,7 +992,15 @@
    "difficulty": "hard",
    "why": "Swing timing and a key change up a step every verse.",
    "rated": [],
-   "yt": "4jcCwmtVAIM"
+   "yt": "4jcCwmtVAIM",
+   "part": {
+    "label": "First three verses, including the first key change",
+    "start": 5.75,
+    "end": 74.65,
+    "lrclib": 7739397,
+    "lrc_duration": 189.0
+   },
+   "duration": 190
   },
   {
    "id": "crash-test-dummies-mmm-mmm-mmm-mmm",
@@ -613,7 +1013,15 @@
    "rated": [
     "30daysinger"
    ],
-   "yt": "eTeg1txDv8w"
+   "yt": "eTeg1txDv8w",
+   "part": {
+    "label": "First verse and chorus",
+    "start": 10.39,
+    "end": 53.16,
+    "lrclib": 30116702,
+    "lrc_duration": 234.0
+   },
+   "duration": 243
   },
   {
    "id": "lou-reed-perfect-day",
@@ -624,7 +1032,15 @@
    "difficulty": "hard",
    "why": "Soft low verses, then a climb to your top notes in the \"reap\" section.",
    "rated": [],
-   "yt": "9wxI4KK9ZYo"
+   "yt": "9wxI4KK9ZYo",
+   "part": {
+    "label": "First two verses and chorus",
+    "start": 12.05,
+    "end": 78.03,
+    "lrclib": 4670472,
+    "lrc_duration": 220.0
+   },
+   "duration": 224
   },
   {
    "id": "james-taylor-fire-and-rain",
@@ -635,7 +1051,15 @@
    "difficulty": "hard",
    "why": "Uses your whole range, with long, exposed held notes.",
    "rated": [],
-   "yt": "EbD7lfrsY2s"
+   "yt": "EbD7lfrsY2s",
+   "part": {
+    "label": "First verse and chorus",
+    "start": 11.8,
+    "end": 64.7,
+    "lrclib": 7673663,
+    "lrc_duration": 205.0
+   },
+   "duration": 205
   }
  ]
 }

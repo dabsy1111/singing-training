@@ -270,8 +270,13 @@ def songbook():
             "sources": book.get("sources", {}), "levels": book.get("levels", {}), "songs": rows}
 
 
+class SongbookAdd(BaseModel):
+    whole: bool = False     # the whole track instead of the verse-and-chorus part
+
+
 @app.post("/api/songbook/{book_id}/add")
-def songbook_add(book_id: str):
+def songbook_add(book_id: str, body: SongbookAdd | None = None):
+    whole = bool(body and body.whole)
     s = next((x for x in _songbook()["songs"] if x["id"] == book_id), None)
     if not s:
         raise HTTPException(404, "That song isn't in the list")
@@ -281,7 +286,13 @@ def songbook_add(book_id: str):
     st = db.get_settings()
     t, kind, _ = songbook_fit(s["low"], s["high"], st["rangeLow"], st["rangeHigh"])
     song_id = uuid.uuid4().hex[:12]
-    db.add_song(song_id, f"{s['artist']} – {s['title']}", f"https://www.youtube.com/watch?v={s['yt']}")
+    part = s.get("part") if not whole else None
+    title = f"{s['artist']} – {s['title']}" + (f" ({part['label'][0].lower() + part['label'][1:]})" if part else "")
+    db.add_song(song_id, title[:200], f"https://www.youtube.com/watch?v={s['yt']}")
+    if part:
+        d = pipeline.song_dir(song_id)
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "part.json").write_text(json.dumps({**part, "artist": s["artist"], "title": s["title"]}))
     if t and kind in ("key", "stretch"):
         trs = db.get_kv("songbook-tr", {}) or {}
         trs[song_id] = t

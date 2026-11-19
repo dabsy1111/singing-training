@@ -129,6 +129,10 @@ def process(song_id: str, job: dict):
         stage(song_id, f"Splitting vocals from music (Demucs, ~{max(1, round(duration / 60 * 0.6))} min on CPU)")
         separate(src, d)
 
+    if cut_part(song_id, d, src, vocals, accomp, duration):   # songbook pick: keep just a verse and chorus
+        duration = probe_duration(src)
+        db.update_song(song_id, duration=duration)
+
     guide, music, backing = vocals, accomp, None
     lead_split = False
     if LEAD_SPLIT and KARAOKE_MODEL.exists() and split_wanted:
@@ -196,6 +200,8 @@ def process(song_id: str, job: dict):
     from . import lyrics
     if job.get("reanalyse") and lyrics.load(d):
         pass    # keep the lyrics (and any edits) the song already has
+    elif part_lyrics(d, analysis["notes"]):
+        pass    # the cut part's lines, from the same LRCLIB record that placed the cut
     else:
         stage(song_id, "Finding the lyrics")
         try:
@@ -206,6 +212,137 @@ def process(song_id: str, job: dict):
 
     lo, hi = analysis.get("range") or (None, None)
     db.update_song(song_id, status="ready", stage=None, error=None, note_low=lo, note_high=hi)
+
+
+# --------------------------------------------------------------------------
+# part of a song: songbook picks keep a verse and chorus instead of the whole track
+# --------------------------------------------------------------------------
+# part.json (written when the song is added): {label, start, end, lrclib, lrc_duration}; start/end are
+# in the LRCLIB record's (album) time. The video can run earlier or later than the album, so the
+# record's lines are lined up with where the separated vocal is singing before cutting.
+# After the cut: done, offset (video = album + offset), clip [a, b] in video time, lines (album time).
+
+PART_LEAD_S = 3.0     # music before the first sung line, to hear the count-in
+PART_TAIL_S = 2.0
+
+
+def _activity(vocals: Path, hop: float = 0.1) -> np.ndarray:
+    """1 where the separated vocal is singing, per hop."""
+    import soundfile as sf
+    x, sr = sf.read(str(vocals), dtype="float32", always_2d=True)
+    x = x.mean(axis=1)
+    n = int(sr * hop)
+    frames = len(x) // n
+    if frames < 10:
+        return np.zeros(0)
+    rms = np.sqrt((x[: frames * n].reshape(frames, n) ** 2).mean(axis=1) + 1e-12)
+    db_ = 20 * np.log10(rms)
+    return (db_ > np.percentile(db_, 95) - 25).astype(float)
+
+
+def part_offset(lines: list[dict], act: np.ndarray, search: float, hop: float = 0.1) -> tuple[float, float]:
+    """Seconds to add to the record's times so its sung lines sit on the vocal: (offset, match 0..1).
+    The match is the correlation between 'a line is being sung' and 'the vocal is active'."""
+    if not len(act) or not lines:
+        return 0.0, 0.0
+    sung = np.zeros(len(act) + int(search / hop) * 2 + 10)
+    for l in lines:
+        a, b = l["t0"], min(l["t1"], l["t0"] + 6.0)
+        sung[int(a / hop): max(int(a / hop) + 1, int(b / hop))] = 1
+    best = (0.0, -1.0)
+    zero = None
+    for k in range(-int(search / hop), int(search / hop) + 1):
+        # vocal frame i is album time i*hop - offset; offset = k*hop
+        idx = np.arange(len(act)) - k
+        ok = (idx >= 0) & (idx < len(sung))
+        if ok.sum() < 100:
+            continue
+        v, s = act[ok], sung[idx[ok]]
+        if v.std() == 0 or s.std() == 0:
+            continue
+        c = float(np.corrcoef(v, s)[0, 1])
+        if k == 0:
+            zero = c
+        if c > best[1] + 1e-9 or (abs(c - best[1]) <= 1e-9 and abs(k) < abs(best[0] / hop)):
+            best = (k * hop, c)
+    off, c = best
+    # cautious, like the lyrics aligner: only move when the match is clear
+    if c < 0.2 or (zero is not None and off != 0 and c < zero + 0.03):
+        return 0.0, zero or 0.0
+    return round(off, 2), round(c, 3)
+
+
+def _trim(p: Path, a: float, b: float):
+    tmp = p.with_suffix(".cut" + p.suffix)
+    fade_out = max(0.1, min(PART_TAIL_S, (b - a) / 4))
+    run(["ffmpeg", "-y", "-v", "error", "-ss", f"{a:.3f}", "-to", f"{b:.3f}", "-i", str(p),
+         "-af", f"afade=t=in:d=0.3,afade=t=out:st={max(0.0, b - a - fade_out):.3f}:d={fade_out:.3f}",
+         "-c:a", "pcm_f32le" if p.name != "source.wav" else "pcm_s16le", str(tmp)])
+    tmp.replace(p)
+
+
+def cut_part(song_id: str, d: Path, src: Path, vocals: Path, accomp: Path, duration: float) -> bool:
+    """Cut source and stems down to the song's part. True if it cut now."""
+    pp = d / "part.json"
+    if not pp.exists():
+        return False
+    try:
+        part = json.loads(pp.read_text())
+    except ValueError:
+        return False
+    if part.get("done"):
+        return False
+    stage(song_id, f"Cutting out the part to sing ({part.get('label', 'verse and chorus').lower()})")
+    from . import lyrics
+    lines = part.get("lines")
+    if not lines and part.get("lrclib"):
+        try:
+            rec = lyrics.lrclib_get(part["lrclib"]) or {}
+            lines = lyrics.parse_lrc(rec.get("syncedLyrics") or "")
+        except Exception:  # noqa: BLE001 - without the record the cut uses album time as is
+            log.warning("couldn't fetch LRCLIB %s for %s", part.get("lrclib"), song_id, exc_info=True)
+            lines = []
+    dd = abs(duration - (part.get("lrc_duration") or duration))
+    off, match = part_offset(lines or [], _activity(vocals), search=max(20.0, min(240.0, dd + 20)))
+    a = max(0.0, part["start"] + off - PART_LEAD_S)
+    b = min(duration, part["end"] + off + PART_TAIL_S)
+    if b - a < 15:      # the cut landed off the end of the video: keep the whole song
+        log.warning("part %s..%s (offset %s) doesn't fit %s s for %s; keeping the whole song",
+                    part["start"], part["end"], off, duration, song_id)
+        part.update(done=True, skipped=True)
+        pp.write_text(json.dumps(part))
+        return False
+    for p in (vocals, accomp, src):
+        _trim(p, a, b)
+    part.update(done=True, offset=off, match=match, clip=[round(a, 2), round(b, 2)],
+                full_duration=round(duration, 2), lines=lines or [])
+    pp.write_text(json.dumps(part))
+    log.info("cut %s to %.1f-%.1f s (offset %+.1f, match %.2f)", song_id, a, b, off, match)
+    return True
+
+
+def part_lyrics(d: Path, notes: list) -> bool:
+    """Lyrics for a cut song: the record's lines moved into the clip's time, nudged onto the notes."""
+    pp = d / "part.json"
+    if not pp.exists():
+        return False
+    try:
+        part = json.loads(pp.read_text())
+    except ValueError:
+        return False
+    if not (part.get("done") and part.get("clip") and part.get("lines")):
+        return False
+    from . import lyrics
+    a, b = part["clip"]
+    shift = part.get("offset", 0.0) - a
+    lines = [{"t0": round(l["t0"] + shift, 2), "t1": round(l["t1"] + shift, 2), "text": l["text"]}
+             for l in part["lines"] if l["t1"] + shift > 0.3 and l["t0"] < part["end"] - 0.5]
+    if not lines:
+        return False
+    lyrics.save(d, {"source": "lrclib", "synced": True, "lines": lines, "offset": lyrics.best_offset(lines, notes, search=4.0),
+                    "match": {"artist": part.get("artist"), "track": part.get("title"), "id": part.get("lrclib"),
+                              "duration": part.get("lrc_duration"), "part": part.get("label")}})
+    return True
 
 
 def split_backing_wanted() -> bool:
