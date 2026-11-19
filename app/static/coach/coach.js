@@ -8,7 +8,7 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 async function api(path, opts = {}) {
-  const r = await fetch('/api/coach' + path, {
+  const r = await fetch(path, {
     method: opts.method || 'GET',
     headers: opts.body ? { 'Content-Type': 'application/json' } : {},
     body: opts.body ? JSON.stringify(opts.body) : undefined,
@@ -177,11 +177,25 @@ async function runSession() {
   const text = sessionText(summary);
   $('sentText').textContent = text; $('sentBox').hidden = false;
   say(`Done: ${summary.hits}/${summary.notes} on target.`);
+  if (!$('autoAsk').checked || !coachOn) { say(`Done: ${summary.hits}/${summary.notes} on target. Not sent to the coach.`); return; }
+  addMsg('note', 'Sent the session results to the coach');
+  const wait = addMsg('assistant wait', 'Coach is thinking…');
+  const question = $('msg').value.trim();
+  if (question) { addMsg('user', question); $('msg').value = ''; }
   try {
-    const { id } = await api('/sessions', { method: 'POST', body: { exercise: kind, summary, text, score: summary.inTunePct } });
+    const r = await api('/api/session', { method: 'POST', body: {
+      exerciseType: kind === 'hold' ? 'Hold the pitch' : 'Match the note',
+      targetNotes: results.map(t => t.target),
+      pitchAccuracy: summary.inTunePct,
+      detectedRange: summary.detectedRange,
+      missedNotes: results.filter(t => !t.hit).map(t => t.target),
+      details: text,
+      userMessage: question || undefined,
+    } });
+    $('sentText').textContent = r.sent || text;
+    showReply(wait, r);
     loadMemory();
-    if ($('autoAsk').checked && coachOn) await askCoach(null, id);
-  } catch (e) { toast('Couldn’t save the session: ' + e.message); }
+  } catch (e) { wait.className = 'msg note'; wait.textContent = '⚠ ' + e.message; }
 }
 
 $('go').onclick = () => { if (!session) runSession().finally(() => (session = null)); };
@@ -200,18 +214,19 @@ function addMsg(role, text) {
   return d;
 }
 
-async function askCoach(message, sessionId) {
-  if (message) addMsg('user', message);
-  else addMsg('note', 'Sent the session summary to the coach');
+function showReply(el, r) {
+  el.className = 'msg assistant'; el.textContent = r.reply;
+  for (const n of r.notesAdded || []) addMsg('note', `📝 Coach remembered: ${n.note}`);
+}
+
+async function askCoach(message) {
+  addMsg('user', message);
   const wait = addMsg('assistant wait', 'Coach is thinking…');
   try {
-    const r = await api('/chat', { method: 'POST', body: { message, session_id: sessionId ?? null } });
-    wait.className = 'msg assistant'; wait.textContent = r.reply;
-    for (const n of r.notes_added || []) addMsg('note', `📝 Coach remembered: ${n.note}`);
-    if (r.notes_added?.length) loadMemory();
-  } catch (e) {
-    wait.className = 'msg note'; wait.textContent = '⚠ ' + e.message;
-  }
+    const r = await api('/api/coach/chat', { method: 'POST', body: { message } });
+    showReply(wait, r);
+    if (r.notesAdded?.length) loadMemory();
+  } catch (e) { wait.className = 'msg note'; wait.textContent = '⚠ ' + e.message; }
 }
 
 $('ask').onsubmit = e => {
@@ -227,38 +242,38 @@ $('ask').onsubmit = e => {
 // --------------------------------------------------------------------------
 
 async function loadMemory() {
-  const m = await api('/memory');
-  $('memCount').textContent = `(${m.notes.length} note${m.notes.length === 1 ? '' : 's'})`;
-  $('notes').innerHTML = m.notes.length
-    ? m.notes.map(n => `<li><span><span class="pill">${esc(n.kind)}</span> ${esc(n.note)}${n.source === 'user' ? ' <span class="dim">(you)</span>' : ''}</span><button data-note="${n.id}" aria-label="Delete">✕</button></li>`).join('')
+  const [notes, sessions, pv] = await Promise.all([api('/api/memory'), api('/api/coach/sessions?limit=3'), api('/api/coach/preview')]);
+  $('memCount').textContent = `(${notes.length} note${notes.length === 1 ? '' : 's'})`;
+  $('notes').innerHTML = notes.length
+    ? notes.map(n => `<li><span>${esc(n.note)} <span class="dim small">${esc(n.created_at.slice(0, 10))}</span></span><button data-note="${n.id}" aria-label="Delete">✕</button></li>`).join('')
     : '<li><span class="dim">Nothing yet. The coach saves notes as it learns about you.</span></li>';
-  $('sessions').innerHTML = m.sessions.length
-    ? m.sessions.map(s => `<li><span><span class="dim">${new Date(s.created * 1000).toLocaleString()}</span><br>${esc(s.text)}</span><button data-session="${s.id}" aria-label="Delete">✕</button></li>`).join('')
+  $('sessions').innerHTML = sessions.length
+    ? sessions.map(s => `<li><span><span class="dim">${new Date(s.created * 1000).toLocaleString()}</span><br>${esc(s.text)}</span><button data-session="${s.id}" aria-label="Delete">✕</button></li>`).join('')
     : '<li><span class="dim">No sessions yet.</span></li>';
-  $('preview').textContent = m.prompt_preview;
+  $('preview').textContent = pv.system;
 }
 
 $('notes').onclick = async e => {
   const id = e.target.dataset.note; if (!id) return;
-  await api('/memory/notes/' + id, { method: 'DELETE' }); loadMemory();
+  await api('/api/memory/' + id, { method: 'DELETE' }); loadMemory();
 };
 $('sessions').onclick = async e => {
   const id = e.target.dataset.session; if (!id) return;
-  await api('/sessions/' + id, { method: 'DELETE' }); loadMemory();
+  await api('/api/coach/sessions/' + id, { method: 'DELETE' }); loadMemory();
 };
 $('addNote').onsubmit = async e => {
   e.preventDefault();
   const t = $('noteText').value.trim(); if (!t) return;
-  try { await api('/memory/notes', { method: 'POST', body: { note: t, kind: 'other' } }); $('noteText').value = ''; loadMemory(); }
+  try { await api('/api/memory', { method: 'POST', body: { note: t } }); $('noteText').value = ''; loadMemory(); }
   catch (err) { toast(err.message); }
 };
 $('clearChat').onclick = async () => {
   if (!confirm('Clear the chat history? Notes and sessions stay.')) return;
-  await api('/messages', { method: 'DELETE' }); $('log').innerHTML = '';
+  await api('/api/coach/messages', { method: 'DELETE' }); $('log').innerHTML = '';
 };
 $('forget').onclick = async () => {
   if (!confirm('Delete every coach note, session summary and chat message?')) return;
-  await api('/memory', { method: 'DELETE' }); $('log').innerHTML = ''; loadMemory();
+  await api('/api/coach/everything', { method: 'DELETE' }); $('log').innerHTML = ''; loadMemory();
 };
 
 // --------------------------------------------------------------------------
@@ -272,14 +287,14 @@ $('forget').onclick = async () => {
     $('octaveFree').checked = !!s.octaveFree;
   } catch {}
   try {
-    const st = await api('/status');
+    const st = await api('/api/coach/status');
     coachOn = st.configured;
     $('model').textContent = st.model;
     $('notConfigured').hidden = coachOn;
     $('msg').disabled = !coachOn;
   } catch {}
   try {
-    for (const m of await api('/messages?limit=30')) addMsg(m.role, m.content);
+    for (const m of await api('/api/coach/messages?limit=30')) addMsg(m.role, m.content);
   } catch {}
   loadMemory().catch(() => {});
 })();

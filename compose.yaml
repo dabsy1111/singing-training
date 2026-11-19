@@ -18,7 +18,8 @@ services:
       GROQ_API_KEY: ${GROQ_API_KEY:-}            # optional: transcribe lyrics LRCLIB doesn't have
       GROQ_LANGUAGE: ${GROQ_LANGUAGE:-}          # optional: e.g. en; blank = detect
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}        # optional: turns on the AI Coach page (/coach); text only, never audio
-      OPENAI_MODEL: ${OPENAI_MODEL:-}            # optional: blank = the app's default model
+      OPENAI_MODEL: ${OPENAI_MODEL:-}            # optional: blank = gpt-4o-mini
+      OPENAI_MAX_TOKENS: ${OPENAI_MAX_TOKENS:-}  # optional: reply length, blank = 200
     volumes:
       - ./data:/data
     # No ports published: everything goes through Caddy's HTTPS port below.

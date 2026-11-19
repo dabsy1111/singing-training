@@ -10,3 +10,4 @@ librosa==1.0.1
 soundfile==0.14.0
 numpy==2.5.3
 requests
+openai==3.55.1

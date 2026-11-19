@@ -120,6 +120,10 @@ export function scoreTrial(frames, targetMidi, t0, opts = {}) {
     lockSec: null, medianCents: null, meanAbsCents: null, inTunePct: 0, spreadCents: null, driftCentsPerSec: null, hit: false };
   if (voiced.length < 10) return result;    // under ~0.2 s of singing
   result.voicedSec = r1(voiced.length * 0.02);
+  // Lowest and highest notes actually sung (10th / 90th percentile, so a stray frame doesn't count)
+  const ms = voiced.map(f => targetMidi + f.c / 100).sort((a, b) => a - b);
+  result.lowMidi = Math.round(ms[Math.floor(ms.length * 0.1)]);
+  result.highMidi = Math.round(ms[Math.floor(ms.length * 0.9)]);
 
   // Which octave did they sing in? Fold to the most common one if octave-free.
   const oct = median(voiced.map(f => Math.round(f.c / 1200)));
@@ -169,6 +173,7 @@ export function summariseSession(exercise, trials, ctx) {
     exercise, at: new Date().toISOString(),
     range: `${midiName(ctx.rangeLow)}–${midiName(ctx.rangeHigh)}`,
     octaveFree: !!ctx.octaveFree,
+    detectedRange: sung.length ? { low: midiName(Math.min(...sung.map(t => t.lowMidi))), high: midiName(Math.max(...sung.map(t => t.highMidi))) } : null,
     notes: trials.length, hits: trials.filter(t => t.hit).length, silent: trials.length - sung.length,
     inTunePct: avg('inTunePct'), biasCents: bias(sung), biasLowCents: bias(lo), biasHighCents: bias(hi),
     lockSec: sung.filter(t => t.lockSec != null).length ? r1(mean(sung.filter(t => t.lockSec != null).map(t => t.lockSec))) : null,
