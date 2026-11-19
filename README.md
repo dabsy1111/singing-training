@@ -27,6 +27,7 @@ A self-hosted singing trainer modelled on vocalify.me, with one big addition: pa
 - **Loudness line.** A band under the notes shows the singer's loudness from the recording (grey) and yours (blue), each against its own loud passages, so you can match swells and fades. "Show loudness" on the song page turns it off.
 - **Ear training.** Higher or lower, name the interval, sing it back. Misses are logged so weak intervals show up.
 - **Progress.** Score history, an accuracy heatmap by note, ear-training stats, and recorded takes you can play back.
+- **AI Coach (beta, separate page at `/coach`, "Coach β" in the menu).** A Singing Carrots-style text coach, kept apart from the main app so the two can be compared. Live pitch from the mic (mic-pitch, YIN), two short sessions (*Match the note*: hear a note, sing it back, five notes across your range; *Hold the pitch*: three 6-second holds), and a chat with an OpenAI model that gets the session's numbers as text and replies with one or two things to work on. It keeps a memory you can see and edit: notes it chose to save about you, plus your recent session summaries. **Audio never leaves your device**: the browser turns your singing into numbers, and only those numbers (shown under "What the coach sees") and what you type go to the server and on to OpenAI. Needs `OPENAI_API_KEY` in the stack's `.env`; `OPENAI_MODEL` picks the model.
 
 There's one password (`VL_PASSWORD`) rather than accounts. It's one person's trainer, and everything syncs through the server's SQLite database.
 
@@ -52,7 +53,7 @@ Then open:
 
 **Updating:** press **Update** on the stack in Dockge. It pulls the newest image and restarts. Your songs, takes, history and settings live in the stack's `data/` folder and aren't touched.
 
-Optional settings for the `.env` box (defaults shown): `VL_HTTPS_PORT=8443` and `VL_TUNNEL_PORT=18095` (change either if the port is taken), `MAX_SONG_MINUTES=12`, `PITCH_MODEL=swiftf0`, `NOTE_MODEL=game_checked` (`game` keeps every GAME note, `contour` brings back the old notes from the pitch line), `LEAD_SPLIT=1`, `CREPE_MODEL=tiny`, `DEMUCS_MODEL=htdemucs`, `PROCESS_THREADS=5`, `YTDLP_AUTO_UPDATE=1`.
+Optional settings for the `.env` box (defaults shown): `VL_HTTPS_PORT=8443` and `VL_TUNNEL_PORT=18095` (change either if the port is taken), `MAX_SONG_MINUTES=12`, `PITCH_MODEL=swiftf0`, `NOTE_MODEL=game_checked` (`game` keeps every GAME note, `contour` brings back the old notes from the pitch line), `LEAD_SPLIT=1`, `CREPE_MODEL=tiny`, `DEMUCS_MODEL=htdemucs`, `PROCESS_THREADS=5`, `YTDLP_AUTO_UPDATE=1`, `OPENAI_API_KEY=` (turns on the AI Coach page), `OPENAI_MODEL=gpt-5.4-mini`.
 
 ### Without Dockge
 

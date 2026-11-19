@@ -1,0 +1,30 @@
+.coach [hidden] { display: none !important; }
+.coach { max-width: 760px; }
+.coach h2 { margin: 0 0 10px; }
+.coach label { display: inline-flex; gap: 6px; align-items: center; }
+.center { text-align: center; }
+.readout { margin: 10px 0 6px; }
+.meter .zone { position: absolute; left: 37.5%; width: 25%; top: 0; bottom: 0; background: rgba(62, 207, 142, .25); border-radius: 99px; }
+.meter i { transition: left .06s linear; }
+#note.on { color: var(--green); } #note.near { color: var(--amber); } #note.off { color: var(--red); }
+#trace { width: 100%; height: 150px; background: #0f1116; border: 1px solid var(--line); border-radius: 10px; display: block; }
+.prompt { font-size: 17px; margin: 12px 0; min-height: 1.5em; }
+.prompt.sing { color: var(--green); font-weight: 600; }
+.prompt.listen { color: var(--accent); }
+.trials { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; }
+.trial { background: var(--panel2); border-radius: 10px; padding: 8px 10px; font-size: 13px; border: 1px solid transparent; }
+.trial b { font-size: 18px; display: block; }
+.trial.hit { border-color: var(--green); } .trial.miss { border-color: var(--red); } .trial.now { border-color: var(--accent); }
+pre { white-space: pre-wrap; word-break: break-word; background: var(--panel2); padding: 10px; border-radius: 8px; font-size: 12px; }
+.log { display: flex; flex-direction: column; gap: 8px; max-height: 50vh; overflow-y: auto; margin: 6px 0 10px; }
+.msg { padding: 8px 12px; border-radius: 12px; max-width: 88%; white-space: pre-wrap; overflow-wrap: anywhere; }
+.msg.user { align-self: flex-end; background: var(--accent); color: #0b1020; }
+.msg.assistant { align-self: flex-start; background: var(--panel2); }
+.msg.note { align-self: center; font-size: 12px; color: var(--dim); background: none; padding: 0; }
+.msg.wait { color: var(--dim); }
+.mem { list-style: none; padding: 0; margin: 8px 0; display: grid; gap: 6px; }
+.mem li { display: flex; gap: 8px; align-items: flex-start; background: var(--panel2); border-radius: 8px; padding: 6px 8px; font-size: 13px; }
+.mem li span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.mem li button { padding: 2px 8px; }
+.end { justify-content: flex-end; margin-top: 10px; }
+#memBox summary { cursor: pointer; }

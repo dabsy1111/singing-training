@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import auth, db, lyrics, pipeline
+from . import auth, coach, db, lyrics, pipeline
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("main")
@@ -29,6 +29,7 @@ BUILT = os.environ.get("VL_BUILT", "")
 
 app = FastAPI(title="Vocal Lab")
 app.middleware("http")(auth.middleware)
+app.include_router(coach.router)
 
 
 @app.middleware("http")
@@ -52,6 +53,7 @@ def startup():
     for p in (DATA_DIR, pipeline.SONGS_DIR, TAKES_DIR, UPLOAD_DIR):
         p.mkdir(parents=True, exist_ok=True)
     db.init(DATA_DIR / "vocal-lab.db")
+    coach.init()
     auth.init(DATA_DIR)
     pipeline.start_worker()
     # Pick up anything that was interrupted by a restart.
@@ -790,7 +792,8 @@ def me():
 
 
 def versioned(html: str) -> str:
-    for name in ("style.css", "mic-filter.js", "app.js", "editor.js", "lessons.js", "course.js"):
+    for name in ("style.css", "mic-filter.js", "app.js", "editor.js", "lessons.js", "course.js",
+                 "coach/coach.css", "coach/coach.js"):
         html = html.replace(f"/static/{name}\"", f"/static/{name}?v={VERSION}\"")
     return html.replace("</head>", f'<script>window.VL_VERSION="{VERSION}";</script>\n</head>', 1)
 
@@ -804,3 +807,15 @@ def index():
     if _index_html is None:
         _index_html = versioned((STATIC / "index.html").read_text())
     return HTMLResponse(_index_html, headers={"Cache-Control": "no-cache"})
+
+
+_coach_html = None
+
+
+@app.get("/coach")
+def coach_page():
+    """AI Coach (beta), a separate page so it can be compared with the main app."""
+    global _coach_html
+    if _coach_html is None:
+        _coach_html = versioned((STATIC / "coach" / "index.html").read_text())
+    return HTMLResponse(_coach_html, headers={"Cache-Control": "no-cache"})

@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#14161c">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Vocal Coach">
+<title>Vocal Lab · AI Coach</title>
+<link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="/static/coach/coach.css">
+</head>
+<body>
+<header class="top">
+  <a href="/" class="brand">Vocal&nbsp;Lab</a>
+  <nav>
+    <a href="/">← Main app</a>
+    <a href="/coach" class="on">AI Coach β</a>
+  </nav>
+</header>
+<main class="coach">
+  <section class="card live" aria-label="Live pitch">
+    <div class="row">
+      <button id="mic" class="primary">🎤 Start mic</button>
+      <span id="micInfo" class="dim small">Your voice is analysed on this device. Audio is never uploaded.</span>
+    </div>
+    <div class="readout">
+      <div id="note" class="tuner">–</div>
+      <div id="cents" class="cents dim">sing something</div>
+      <div class="meter"><span class="zone"></span><i id="needle"></i></div>
+      <div id="hz" class="dim small center">&nbsp;</div>
+    </div>
+    <canvas id="trace" height="150" aria-label="Pitch over the last few seconds"></canvas>
+  </section>
+
+  <section class="card" aria-label="Practice">
+    <h2>Practice</h2>
+    <div class="row">
+      <label class="dim small">Exercise
+        <select id="exercise">
+          <option value="match">Match the note (5 notes, 3 s each)</option>
+          <option value="hold">Hold the pitch (3 notes, 6 s each)</option>
+        </select>
+      </label>
+      <label class="dim small"><input type="checkbox" id="octaveFree"> Any octave counts</label>
+      <button id="go" class="primary" disabled>Start session</button>
+      <button id="stopSession" hidden>Stop</button>
+    </div>
+    <div id="prompt" class="prompt dim">Start the mic, then start a session. Each note plays first; sing it back when it says “Sing”.</div>
+    <div id="trials" class="trials"></div>
+    <details id="sentBox" hidden>
+      <summary class="dim small">What the coach sees (text only)</summary>
+      <pre id="sentText"></pre>
+    </details>
+  </section>
+
+  <section class="card chat" aria-label="Coach chat">
+    <div class="row"><h2 class="grow">Coach</h2><span id="model" class="pill"></span></div>
+    <div id="notConfigured" class="err" hidden>The coach is off: add OPENAI_API_KEY to the stack's .env and redeploy.</div>
+    <div id="log" class="log" aria-live="polite"></div>
+    <form id="ask" class="row">
+      <input id="msg" type="text" class="grow" placeholder="Ask your coach…" autocomplete="off" maxlength="2000">
+      <button class="primary">Send</button>
+    </form>
+    <label class="dim small"><input type="checkbox" id="autoAsk" checked> Ask for feedback after each session</label>
+  </section>
+
+  <section class="card" aria-label="Coach memory">
+    <details id="memBox">
+      <summary><b>Coach’s memory</b> <span id="memCount" class="dim small"></span></summary>
+      <p class="dim small">Notes the coach saved about you, and the practice summaries it reads. Delete anything you don't want it to use.</p>
+      <ul id="notes" class="mem"></ul>
+      <form id="addNote" class="row">
+        <input id="noteText" type="text" class="grow" placeholder="Add a note yourself, e.g. “I want to sing Kyoto Snow”" maxlength="300">
+        <button>Add</button>
+      </form>
+      <h3 class="small dim">Recent sessions it reads</h3>
+      <ul id="sessions" class="mem"></ul>
+      <details>
+        <summary class="dim small">Exactly what goes into the coach's prompt</summary>
+        <pre id="preview"></pre>
+      </details>
+      <div class="row end">
+        <button id="clearChat">Clear chat</button>
+        <button id="forget" class="danger">Forget everything</button>
+      </div>
+    </details>
+  </section>
+</main>
+<div id="toast" hidden></div>
+<script type="module" src="/static/coach/coach.js"></script>
+</body>
+</html>

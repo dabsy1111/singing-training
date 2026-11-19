@@ -17,6 +17,8 @@ services:
       YTDLP_AUTO_UPDATE: ${YTDLP_AUTO_UPDATE:-1}
       GROQ_API_KEY: ${GROQ_API_KEY:-}            # optional: transcribe lyrics LRCLIB doesn't have
       GROQ_LANGUAGE: ${GROQ_LANGUAGE:-}          # optional: e.g. en; blank = detect
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}        # optional: turns on the AI Coach page (/coach); text only, never audio
+      OPENAI_MODEL: ${OPENAI_MODEL:-}            # optional: blank = the app's default model
     volumes:
       - ./data:/data
     # No ports published: everything goes through Caddy's HTTPS port below.
