@@ -39,8 +39,21 @@ from . import db
 
 log = logging.getLogger("coach")
 
-OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "").strip() or "gpt-4o-mini"
-MAX_TOKENS = int(os.environ.get("OPENAI_MAX_TOKENS", "") or 200)
+def _env(name):
+    return os.environ.get(name, "").strip()
+
+
+OPENAI_MODEL = _env("OPENAI_MODEL") or "gpt-4o-mini"
+ANTHROPIC_MODEL = _env("ANTHROPIC_MODEL") or "claude-haiku-5-5"
+# COACH_PROVIDER = openai | anthropic. Blank: Anthropic if its key is set, otherwise OpenAI.
+PROVIDER = (_env("COACH_PROVIDER").lower()
+            or ("anthropic" if _env("ANTHROPIC_API_KEY") and not _env("OPENAI_API_KEY") else "openai"))
+if PROVIDER not in ("openai", "anthropic"):
+    PROVIDER = "openai"
+MODEL = ANTHROPIC_MODEL if PROVIDER == "anthropic" else OPENAI_MODEL
+KEY_VAR = "ANTHROPIC_API_KEY" if PROVIDER == "anthropic" else "OPENAI_API_KEY"
+# Claude answers and calls save_note in one response, so it gets a little more room by default.
+MAX_TOKENS = int(_env("COACH_MAX_TOKENS") or _env("OPENAI_MAX_TOKENS") or (400 if PROVIDER == "anthropic" else 200))
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
 PROMPT_FILE = DATA_DIR / "coach-prompt.md"
 DEFAULT_USER = "me"
@@ -134,16 +147,23 @@ def init():
         db._conn.commit()
 
 
+def _key():
+    """The provider's key, with any stray quotes, spaces or Windows line endings from .env removed."""
+    return _env(KEY_VAR).strip('"').strip("'").strip()
+
+
 def client():
-    """OpenAI client, made on first use. The key comes from OPENAI_API_KEY and is never logged."""
+    """SDK client for the chosen provider, made on first use. The key is never logged."""
     global _client
-    if not os.environ.get("OPENAI_API_KEY", "").strip():
-        raise HTTPException(503, "The coach needs OPENAI_API_KEY set on the server (see the README).")
+    if not _key():
+        raise HTTPException(503, f"The coach needs {KEY_VAR} set on the server (see the README).")
     if _client is None:
-        from openai import OpenAI
-        # .strip(): a key pasted into .env can carry a stray space or a Windows line ending (-> 401)
-        key = os.environ["OPENAI_API_KEY"].strip().strip('"').strip("'").strip()
-        _client = OpenAI(api_key=key, timeout=60, max_retries=2)   # OPENAI_BASE_URL is read from the env
+        if PROVIDER == "anthropic":
+            from anthropic import Anthropic
+            _client = Anthropic(api_key=_key(), timeout=60, max_retries=2)
+        else:
+            from openai import OpenAI
+            _client = OpenAI(api_key=_key(), timeout=60, max_retries=2)   # OPENAI_BASE_URL is read from the env
     return _client
 
 
@@ -156,9 +176,9 @@ def _redact(text: str) -> str:
 
 
 def _hint(status):
-    return {401: "(the API key is wrong or revoked): ",
-            403: "(this key's project can't use that model): ",
-            404: "(model not found; check OPENAI_MODEL): ",
+    return {401: f"(the {KEY_VAR} is wrong or revoked): ",
+            403: "(this key can't use that model): ",
+            404: f"(model not found; check {'ANTHROPIC_MODEL' if PROVIDER == 'anthropic' else 'OPENAI_MODEL'}): ",
             429: "(rate limit, or no credit left on the account): "}.get(status, "")
 
 
@@ -241,43 +261,100 @@ def memory_block(uid, skip_session=None):
 # the model call
 # --------------------------------------------------------------------------
 
+def _failed(e):
+    status = getattr(e, "status_code", None)
+    msg = _redact(getattr(e, "message", None) or str(e))
+    name = "Claude" if PROVIDER == "anthropic" else "OpenAI"
+    log.warning("%s call failed (%s %s): %s", name, type(e).__name__, status or "-", msg[:300])
+    # 424, not 502: Cloudflare swaps an origin's 502 for its own page and the reason is lost.
+    return HTTPException(424, f"{name} {status or ''} {_hint(status)}{msg[:300]}".replace("  ", " "))
+
+
+def _save_note_call(uid, args):
+    """Carry out a save_note tool call; returns (result for the model, saved note or None)."""
+    try:
+        if isinstance(args, str):
+            args = json.loads(args or "{}")
+        note = " ".join(str(args.get("note", "")).split())[:300]
+        nid = add_note(uid, note)
+    except (ValueError, AttributeError, TypeError):
+        return {"ok": False, "reason": "bad arguments"}, None
+    if not nid:
+        return {"ok": False, "reason": "empty or already remembered"}, None
+    return {"ok": True, "id": nid}, {"id": nid, "note": note}
+
+
 def run_coach(uid, messages, session_id=None):
-    """Call the model, carry out any save_note calls, and return (reply, notes added)."""
+    """Call the model, carry out any save_note calls, and return (reply, notes added).
+    messages is OpenAI-shaped (system first); the Anthropic path converts it."""
+    if PROVIDER == "anthropic":
+        return _run_anthropic(uid, messages)
     saved = []
     for _ in range(3):   # at most two rounds of tool calls, then a final answer
         try:
             resp = client().chat.completions.create(
-                model=OPENAI_MODEL, messages=messages, tools=TOOLS, max_completion_tokens=MAX_TOKENS)
+                model=MODEL, messages=messages, tools=TOOLS, max_completion_tokens=MAX_TOKENS)
         except HTTPException:
             raise
         except Exception as e:   # openai.APIError and friends
-            status = getattr(e, "status_code", None)
-            msg = _redact(getattr(e, "message", None) or str(e))
-            log.warning("OpenAI call failed (%s %s): %s", type(e).__name__, status or "-", msg[:300])
-            # 424, not 502: Cloudflare swaps an origin's 502 for its own page and the reason is lost.
-            raise HTTPException(424, f"OpenAI {status or ''} {_hint(status)}{msg[:300]}".replace("  ", " "))
+            raise _failed(e)
         msg = resp.choices[0].message
         if not msg.tool_calls:
             reply = (msg.content or "").strip()
             if not reply and resp.choices[0].finish_reason == "length":
-                reply = "(The reply ran out of room. Raise OPENAI_MAX_TOKENS.)"
+                reply = "(The reply ran out of room. Raise COACH_MAX_TOKENS.)"
             return reply or "(The coach didn't answer. Try again.)", saved
         messages.append({"role": "assistant", "content": msg.content,
                          "tool_calls": [tc.model_dump() for tc in msg.tool_calls]})
         for tc in msg.tool_calls:
             result = {"ok": False}
             if tc.function.name == "save_note":
-                try:
-                    nid = add_note(uid, json.loads(tc.function.arguments or "{}").get("note", ""))
-                    if nid:
-                        saved.append({"id": nid, "note": list_notes(uid, 1)[0]["note"]})
-                        result = {"ok": True, "id": nid}
-                    else:
-                        result = {"ok": False, "reason": "empty or already remembered"}
-                except (ValueError, AttributeError):
-                    result = {"ok": False, "reason": "bad arguments"}
+                result, note = _save_note_call(uid, tc.function.arguments)
+                if note:
+                    saved.append(note)
             messages.append({"role": "tool", "tool_call_id": tc.id, "content": json.dumps(result)})
     return "(The coach didn't answer. Try again.)", saved
+
+
+ANTHROPIC_TOOLS = [{"name": t["function"]["name"], "description": t["function"]["description"],
+                    "input_schema": t["function"]["parameters"]} for t in TOOLS]
+
+
+def _run_anthropic(uid, messages):
+    system = messages[0]["content"]
+    convo = []
+    for m in messages[1:]:   # merge back-to-back turns from the same side (session + question)
+        if convo and convo[-1]["role"] == m["role"] and isinstance(convo[-1]["content"], str):
+            convo[-1]["content"] += "\n\n" + m["content"]
+        else:
+            convo.append({"role": m["role"], "content": m["content"]})
+    saved, texts = [], []
+    for _ in range(3):
+        try:
+            resp = client().messages.create(model=MODEL, system=system, messages=convo,
+                                            tools=ANTHROPIC_TOOLS, max_tokens=MAX_TOKENS)
+        except HTTPException:
+            raise
+        except Exception as e:   # anthropic.APIError and friends
+            raise _failed(e)
+        texts += [b.text for b in resp.content if b.type == "text" and b.text.strip()]
+        uses = [b for b in resp.content if b.type == "tool_use"]
+        if resp.stop_reason != "tool_use" or not uses:
+            reply = "\n\n".join(t.strip() for t in texts)
+            if not reply and resp.stop_reason == "max_tokens":
+                reply = "(The reply ran out of room. Raise COACH_MAX_TOKENS.)"
+            return reply or "(The coach didn't answer. Try again.)", saved
+        convo.append({"role": "assistant", "content": [b.model_dump(exclude_none=True) for b in resp.content]})
+        results = []
+        for b in uses:
+            result = {"ok": False, "reason": "unknown tool"}
+            if b.name == "save_note":
+                result, note = _save_note_call(uid, b.input)
+                if note:
+                    saved.append(note)
+            results.append({"type": "tool_result", "tool_use_id": b.id, "content": json.dumps(result)})
+        convo.append({"role": "user", "content": results})
+    return "\n\n".join(texts) or "(The coach didn't answer. Try again.)", saved
 
 
 # --------------------------------------------------------------------------
@@ -404,7 +481,7 @@ class ChatIn(BaseModel):
 
 @router.get("/api/coach/status")
 def status():
-    return {"configured": bool(os.environ.get("OPENAI_API_KEY", "").strip()), "model": OPENAI_MODEL,
+    return {"configured": bool(_key()), "provider": PROVIDER, "model": MODEL, "keyVar": KEY_VAR,
             "customPrompt": PROMPT_FILE.exists()}
 
 

@@ -11,3 +11,4 @@ soundfile==0.14.0
 numpy==2.5.3
 requests
 openai==3.55.1
+anthropic==2.10.0
