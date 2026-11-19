@@ -53,7 +53,7 @@ Then open:
 
 **Updating:** press **Update** on the stack in Dockge. It pulls the newest image and restarts. Your songs, takes, history and settings live in the stack's `data/` folder and aren't touched.
 
-Optional settings for the `.env` box (defaults shown): `VL_HTTPS_PORT=8443` and `VL_TUNNEL_PORT=18095` (change either if the port is taken), `MAX_SONG_MINUTES=12`, `PITCH_MODEL=swiftf0`, `NOTE_MODEL=game_checked` (`game` keeps every GAME note, `contour` brings back the old notes from the pitch line), `LEAD_SPLIT=1`, `CREPE_MODEL=tiny`, `DEMUCS_MODEL=htdemucs`, `PROCESS_THREADS=5`, `YTDLP_AUTO_UPDATE=1`, `ANTHROPIC_API_KEY=` or `OPENAI_API_KEY=` (turns on the AI Coach page), `COACH_PROVIDER=`, `ANTHROPIC_MODEL=claude-haiku-5-5`, `OPENAI_MODEL=gpt-4o-mini`, `COACH_MAX_TOKENS=400`.
+Optional settings for the `.env` box (defaults shown): `VL_HTTPS_PORT=8443` and `VL_TUNNEL_PORT=18095` (change either if the port is taken), `MAX_SONG_MINUTES=12`, `PITCH_MODEL=swiftf0`, `NOTE_MODEL=game_checked` (`game` keeps every GAME note, `contour` brings back the old notes from the pitch line), `LEAD_SPLIT=1`, `CREPE_MODEL=tiny`, `DEMUCS_MODEL=htdemucs`, `PROCESS_THREADS=5`, `YTDLP_AUTO_UPDATE=1`, `ANTHROPIC_API_KEY=` or `OPENAI_API_KEY=` (turns on the AI Coach page), `COACH_PROVIDER=`, `ANTHROPIC_MODEL=claude-haiku-5-5`, `OPENAI_MODEL=gpt-4o-mini`, `COACH_MAX_TOKENS=1024`, `COACH_THINKING=off`.
 
 ### Without Dockge
 

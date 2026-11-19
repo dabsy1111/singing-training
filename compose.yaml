@@ -23,7 +23,8 @@ services:
       ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-}      # blank = claude-haiku-5-5
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}        # sk-proj-... from platform.openai.com
       OPENAI_MODEL: ${OPENAI_MODEL:-}            # blank = gpt-4o-mini
-      COACH_MAX_TOKENS: ${COACH_MAX_TOKENS:-}    # reply length; blank = 400 (Claude) / 200 (OpenAI)
+      COACH_MAX_TOKENS: ${COACH_MAX_TOKENS:-}    # reply length ceiling; blank = 1024 (Claude) / 200 (OpenAI)
+      COACH_THINKING: ${COACH_THINKING:-}        # Claude only: off (default) or adaptive
       OPENAI_MAX_TOKENS: ${OPENAI_MAX_TOKENS:-}  # older name for COACH_MAX_TOKENS
     volumes:
       - ./data:/data

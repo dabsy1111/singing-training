@@ -52,8 +52,12 @@ if PROVIDER not in ("openai", "anthropic"):
     PROVIDER = "openai"
 MODEL = ANTHROPIC_MODEL if PROVIDER == "anthropic" else OPENAI_MODEL
 KEY_VAR = "ANTHROPIC_API_KEY" if PROVIDER == "anthropic" else "OPENAI_API_KEY"
-# Claude answers and calls save_note in one response, so it gets a little more room by default.
-MAX_TOKENS = int(_env("COACH_MAX_TOKENS") or _env("OPENAI_MAX_TOKENS") or (400 if PROVIDER == "anthropic" else 200))
+# Claude can think before answering and calls save_note in the same response, so it gets more room.
+# The prompt keeps replies to a few sentences either way; this is a ceiling, not a target.
+MAX_TOKENS = int(_env("COACH_MAX_TOKENS") or _env("OPENAI_MAX_TOKENS") or (1024 if PROVIDER == "anthropic" else 200))
+# Short coaching replies don't need thinking, and it spends the token budget before any text.
+# COACH_THINKING=adaptive turns it back on (raise COACH_MAX_TOKENS too).
+THINKING = (_env("COACH_THINKING") or "off").lower()
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
 PROMPT_FILE = DATA_DIR / "coach-prompt.md"
 DEFAULT_USER = "me"
@@ -329,20 +333,33 @@ def _run_anthropic(uid, messages):
         else:
             convo.append({"role": m["role"], "content": m["content"]})
     saved, texts = [], []
+    extra = {"thinking": {"type": "disabled"}} if THINKING == "off" else {}
     for _ in range(3):
         try:
-            resp = client().messages.create(model=MODEL, system=system, messages=convo,
-                                            tools=ANTHROPIC_TOOLS, max_tokens=MAX_TOKENS)
+            try:
+                resp = client().messages.create(model=MODEL, system=system, messages=convo,
+                                                tools=ANTHROPIC_TOOLS, max_tokens=MAX_TOKENS, **extra)
+            except Exception as e:
+                # A model that can't switch thinking off: ask again with its default.
+                if extra and getattr(e, "status_code", None) == 400 and "thinking" in str(e).lower():
+                    log.info("model %s won't turn thinking off; using its default", MODEL)
+                    extra = {}
+                    resp = client().messages.create(model=MODEL, system=system, messages=convo,
+                                                    tools=ANTHROPIC_TOOLS, max_tokens=MAX_TOKENS)
+                else:
+                    raise
         except HTTPException:
             raise
         except Exception as e:   # anthropic.APIError and friends
             raise _failed(e)
+        log.info("claude: stop=%s blocks=%s out_tokens=%s", resp.stop_reason,
+                 ",".join(b.type for b in resp.content), getattr(resp.usage, "output_tokens", "?"))
         texts += [b.text for b in resp.content if b.type == "text" and b.text.strip()]
         uses = [b for b in resp.content if b.type == "tool_use"]
         if resp.stop_reason != "tool_use" or not uses:
             reply = "\n\n".join(t.strip() for t in texts)
-            if not reply and resp.stop_reason == "max_tokens":
-                reply = "(The reply ran out of room. Raise COACH_MAX_TOKENS.)"
+            if resp.stop_reason == "max_tokens":
+                reply = (reply + " …") if reply else "(The reply ran out of room. Raise COACH_MAX_TOKENS.)"
             return reply or "(The coach didn't answer. Try again.)", saved
         convo.append({"role": "assistant", "content": [b.model_dump(exclude_none=True) for b in resp.content]})
         results = []
