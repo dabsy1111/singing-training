@@ -8,6 +8,7 @@ A self-hosted singing trainer modelled on vocalify.me, with one big addition: pa
 
 - **Songs from YouTube or files.** yt-dlp downloads the audio, Demucs (`htdemucs`) splits vocals from accompaniment, UVR-MDX-NET Karaoke 2 separates the lead singer from backing vocals (which go back into the music), SwiftF0 tracks the lead vocal's pitch, and GAME (OpenVPI's singing-to-notes model) splits the melody into notes, one per sung syllable. GAME notes the pitch line doesn't back up (screams, harsh consonants, noise) are dropped. The recording's tuning is measured, so songs that aren't at A440 still grade fairly.
 - **Live pitch feedback.** Your voice is drawn over the target notes, 100 times a second, coloured green / amber / red by how many cents you're off. The HUD says "aim higher" or "aim lower". A mic filter (Settings: Off / Light / Normal / Strong) keeps breaths, clicks, mic bumps and voiced exhales off the line: a sound has to be clearly pitched, louder than the room, not far quieter than your singing, and last long enough to be a sung note. It draws about 60 ms behind your voice to make that call; scoring isn't affected because every frame keeps its own timestamp.
+- **Editor for the computer's mistakes** (song page → "Fix them in the editor"). Wrong notes: tap one and drag it up, down or sideways, drag its ends, split, join, delete, double-tap to add, snap a note or a whole stretch to the pitch line, or move a stretch an octave. Lead/backing mix-ups: drag along the time strip to pick a stretch and say what it really is (lead and backing swapped, all lead, or all backing). A lane under the notes shows the lead singer and the backing vocals on one scale, so a swapped stretch stands out. The server rebuilds the guide vocal, backing vocals and music from the untouched split and finds the melody again in that stretch (about a minute). Note edits save as you go with undo; fixes can be removed one by one; "Reset all notes" goes back to the detected notes. Re-analysing a song later keeps both.
 - **Practice controls.** Pick a section (or set it from the playhead), loop it, mix the accompaniment and guide vocal, and drag the track to move around.
 - **Sing it your way.** Each song has a part picker and key controls, remembered per song:
   - **Part:** the melody, or a harmony line a third above, or a third, fifth or sixth below. Harmonies follow the song's key (detected automatically; you can correct it), so they stay in key.
@@ -28,7 +29,7 @@ A self-hosted singing trainer modelled on vocalify.me, with one big addition: pa
 
 There's one password (`VL_PASSWORD`) rather than accounts. It's one person's trainer, and everything syncs through the server's SQLite database.
 
-Not built yet, compared with Vocalify: the structured lesson course and the melody editor.
+
 
 ## Install with Dockge
 

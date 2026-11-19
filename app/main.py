@@ -42,6 +42,8 @@ async def cache_headers(request, call_next):
                                          if request.query_params.get("v") == VERSION else "no-cache")
     elif request.url.path.startswith("/api/"):
         resp.headers.setdefault("Cache-Control", "no-store")
+    elif request.url.path.startswith("/media/songs/"):
+        resp.headers.setdefault("Cache-Control", "no-cache")   # the editor can rebuild a song's audio
     return resp
 
 
@@ -56,6 +58,14 @@ def startup():
     for s in db.list_songs():
         if s["status"] in ("queued", "processing"):
             d = pipeline.song_dir(s["id"])
+            pending = d / "pending.json"
+            if pending.exists():   # a lead/backing fix from the editor
+                try:
+                    pipeline.enqueue(s["id"], json.loads(pending.read_text()))
+                    db.update_song(s["id"], status="queued", stage="Waiting in queue (resumed)")
+                    continue
+                except ValueError:
+                    pending.unlink(missing_ok=True)
             uploads = list(UPLOAD_DIR.glob(f"{s['id']}.*"))
             job = {"url": s["source"]} if (s["source"] or "").startswith("http") else {}
             if uploads:
@@ -298,6 +308,127 @@ def analysis(song_id: str):
         except Exception:  # noqa: BLE001 - the song still works without it
             log.exception("loudness for %s failed", song_id)
     return FileResponse(p, media_type="application/json")
+
+
+# --------------------------------------------------------------------------
+# editor: hand-fixed notes and lead/backing vocal fixes
+# --------------------------------------------------------------------------
+
+class NoteIn(BaseModel):
+    t0: float
+    t1: float
+    midi: int
+
+
+class NotesIn(BaseModel):
+    notes: list[NoteIn]
+
+
+class VocalFix(BaseModel):
+    t0: float
+    t1: float
+    mode: str
+
+
+class VocalFixesIn(BaseModel):
+    fixes: list[VocalFix]
+
+
+def _read_analysis(song_id):
+    p = pipeline.song_dir(song_id) / "analysis.json"
+    if not p.exists():
+        raise HTTPException(404, "Not analysed yet")
+    return p, json.loads(p.read_text())
+
+
+def _write_analysis(p, an):
+    tmp = p.with_name(".analysis.json")
+    tmp.write_text(json.dumps(an, separators=(",", ":")))
+    tmp.replace(p)
+
+
+@app.put("/api/songs/{song_id}/notes")
+def put_notes(song_id: str, body: NotesIn):
+    """Save the melody as fixed by hand in the editor. The detected notes are kept for 'reset'."""
+    s = _ready_song(song_id)
+    p, an = _read_analysis(song_id)
+    dur = float(an.get("duration") or s.get("duration") or 0) + 1
+    if len(body.notes) > 8000:
+        raise HTTPException(400, "Too many notes")
+    notes = []
+    for n in sorted(body.notes, key=lambda n: n.t0):
+        if not (0 <= n.t0 < n.t1 <= dur) or not 12 <= n.midi <= 108:
+            raise HTTPException(400, f"Bad note at {n.t0:.2f} s")
+        if notes and n.t0 < notes[-1]["t1"] - 0.005:
+            raise HTTPException(400, f"Notes overlap at {n.t0:.2f} s")
+        notes.append({"t0": round(n.t0, 3), "t1": round(n.t1, 3), "midi": n.midi})
+    if an.get("notes_auto") is None:
+        an["notes_auto"] = an.get("notes") or []
+    an["notes"] = notes
+    an["notes_edited"] = True
+    an["range"] = pipeline.note_range(notes)
+    _write_analysis(p, an)
+    lo, hi = an["range"] or (None, None)
+    db.update_song(song_id, note_low=lo, note_high=hi)
+    return {"ok": True, "range": an["range"]}
+
+
+@app.post("/api/songs/{song_id}/notes/reset")
+def reset_notes(song_id: str):
+    """Throw away hand edits: back to the notes the melody finder found."""
+    _ready_song(song_id)
+    p, an = _read_analysis(song_id)
+    if an.get("notes_auto") is not None:
+        an["notes"] = an.pop("notes_auto")
+    an.pop("notes_edited", None)
+    an["range"] = pipeline.note_range(an["notes"])
+    _write_analysis(p, an)
+    lo, hi = an["range"] or (None, None)
+    db.update_song(song_id, note_low=lo, note_high=hi)
+    return {"notes": an["notes"], "range": an["range"]}
+
+
+@app.put("/api/songs/{song_id}/vocal-fixes")
+def put_vocal_fixes(song_id: str, body: VocalFixesIn):
+    """Fix where the separator mixed up lead and backing vocals. The audio is rebuilt in the
+    background and the melody found again inside the ranges that changed (about a minute)."""
+    s = _ready_song(song_id)
+    d = pipeline.song_dir(song_id)
+    p, an = _read_analysis(song_id)
+    if not an.get("backing") or not (d / "backing.mp3").exists():
+        raise HTTPException(400, "This song has the backing vocals mixed into the music. Re-analyse it first (song list → ↻ or the song page).")
+    dur = float(an.get("duration") or s.get("duration") or 0)
+    if len(body.fixes) > 300:
+        raise HTTPException(400, "Too many fixes")
+    fixes = []
+    for f in sorted(body.fixes, key=lambda f: f.t0):
+        t0, t1 = max(0.0, round(f.t0, 2)), min(dur, round(f.t1, 2))
+        if f.mode not in pipeline.FIX_MODES:
+            raise HTTPException(400, f"Unknown fix '{f.mode}'")
+        if t1 - t0 < 0.2:
+            raise HTTPException(400, "Pick at least a fifth of a second")
+        if fixes and t0 < fixes[-1]["t1"]:
+            raise HTTPException(400, f"Two fixes overlap at {t0:.1f} s; remove one first")
+        fixes.append({"t0": t0, "t1": t1, "mode": f.mode})
+    old = an.get("vocal_fixes") or []
+    key = lambda f: (f["t0"], f["t1"], f["mode"])  # noqa: E731
+    changed = [f for f in old if key(f) not in {key(x) for x in fixes}] + [f for f in fixes if key(f) not in {key(x) for x in old}]
+    if not changed:
+        return db.get_song(song_id)
+    job = {"fix_vocals": fixes, "ranges": [[f["t0"], f["t1"]] for f in changed]}
+    (d / "pending.json").write_text(json.dumps(job))
+    db.update_song(song_id, status="queued", stage="Waiting in queue", error=None)
+    pipeline.enqueue(song_id, job)
+    return db.get_song(song_id)
+
+
+@app.get("/api/songs/{song_id}/levels")
+def song_levels(song_id: str):
+    _ready_song(song_id)
+    d = pipeline.song_dir(song_id)
+    if not (d / "vocals.mp3").exists():
+        raise HTTPException(404, "No vocal audio")
+    return pipeline.levels(d)
 
 
 @app.get("/api/songs/{song_id}/key")
@@ -621,7 +752,7 @@ def me():
 
 
 def versioned(html: str) -> str:
-    for name in ("style.css", "mic-filter.js", "app.js", "lessons.js", "course.js"):
+    for name in ("style.css", "mic-filter.js", "app.js", "editor.js", "lessons.js", "course.js"):
         html = html.replace(f"/static/{name}\"", f"/static/{name}?v={VERSION}\"")
     return html.replace("</head>", f'<script>window.VL_VERSION="{VERSION}";</script>\n</head>', 1)
 

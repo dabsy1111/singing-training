@@ -1317,6 +1317,7 @@ route(/^\/song\/([0-9a-f]{12})(?:\?lesson=(\d\.\d))?$/, async (id, lessonId) => 
       <label><input type="checkbox" id="showLyr" ${songPref('all', 'lyrics', '1') === '1' ? 'checked' : ''}> Show lyrics</label>
     </div>
     <div class="legend small"><span><i style="background:var(--green)"></i>within ${s.greenCents}¢</span><span><i style="background:var(--amber)"></i>within ${s.amberCents}¢</span><span><i style="background:var(--red)"></i>off</span><span>Drag the track to move around when stopped. Headphones work best.</span></div>
+    <p class="dim small">Wrong notes, or the guide vocal singing a backing part? <a href="#/song/${id}/edit">Fix them in the editor</a>${an.notes_edited || an.vocal_fixes?.length ? ' (this song has your fixes in it)' : ''}.</p>
     ${an.backing || !an.lead_split ? '' : `<p class="dim small" id="backHint">Want the backing vocals on their own slider? <button id="splitBack">Re-analyse this song</button> (takes a few minutes; lyrics, key and scores are kept).</p>`}
     ${Math.abs(an.tuning || 0) >= 10 ? `<p class="dim small">Recording is tuned ${an.tuning > 0 ? '+' : ''}${an.tuning}¢ from A440; targets follow it.</p>` : ''}
     <div id="res"></div>`;
@@ -1385,6 +1386,8 @@ route(/^\/song\/([0-9a-f]{12})(?:\?lesson=(\d\.\d))?$/, async (id, lessonId) => 
       let urls = an.backing ? { band: m + 'band.mp3', backing: m + 'backing.mp3', vocals: m + 'vocals.mp3' }
         : { accompaniment: m + 'accompaniment.mp3', vocals: m + 'vocals.mp3' };
       if (tr || speed !== 100) urls = await api(`/api/songs/${id}/audio`, { method: 'POST', json: { semitones: tr, speed } });
+      // the editor can rebuild the vocals; a new revision means new addresses, so no stale copies
+      urls = Object.fromEntries(Object.entries(urls).map(([k, u]) => [k, u && `${u}?r=${an.audio_rev || 0}`]));
       const [accomp, backing, vocals] = await Promise.all([loadBuffer(urls.band || urls.accompaniment),
         urls.band && urls.backing ? loadBuffer(urls.backing) : null, loadBuffer(urls.vocals)]);
       if (mine !== audioReq) return;

@@ -94,6 +94,8 @@ def process(song_id: str, job: dict):
     d = song_dir(song_id)
     d.mkdir(parents=True, exist_ok=True)
     src = d / "source.wav"
+    if "fix_vocals" in job:
+        return refix(song_id, d, job["fix_vocals"], job.get("ranges") or [])
     if job.get("reanalyse") and can_renote(d):
         return renote(song_id, d)
 
@@ -142,11 +144,15 @@ def process(song_id: str, job: dict):
     analysis["backing"] = backing is not None   # band.mp3 + backing.mp3 exist, for a separate fader
     if old.get("key") and old["key"].get("detected") is False:
         analysis["key"] = old["key"]    # keep a key the user set by hand
+    analysis["audio_rev"] = int(old.get("audio_rev", 0)) + 1
     (d / "analysis.json").write_text(json.dumps(analysis, separators=(",", ":")))
 
     stage(song_id, "Encoding audio for the browser")
     for f in d.glob("*.*.mp3"):         # key/speed-shifted copies of the old audio
         f.unlink(missing_ok=True)
+    for f in ORIG_FILES.values():       # pre-fix copies of the old split
+        (d / f).unlink(missing_ok=True)
+    (d / "levels.json").unlink(missing_ok=True)
     encode_mp3(music, d / "accompaniment.mp3", channels=2)
     if backing is not None:              # instruments and backing vocals apart, for the faders
         encode_mp3(backing[0], d / "band.mp3", channels=2)
@@ -162,6 +168,19 @@ def process(song_id: str, job: dict):
     if os.environ.get("KEEP_WAV", "0") != "1":
         for f in (vocals, accomp, d / "lead.wav", d / "music.wav", d / "backing.wav", d / "band.wav"):
             f.unlink(missing_ok=True)
+
+    fixes = old.get("vocal_fixes") or []
+    if fixes and backing is not None:
+        # The new split makes the same lead/backing mix-ups the user already fixed by hand
+        # (same model, same song), so put their fixes back and find the melody again.
+        stage(song_id, "Putting your lead/backing vocal fixes back")
+        apply_vocal_fixes(d, fixes)
+        fixed = analyse_vocals(d / "vocals.mp3", tuning=analysis["tuning"] / 100)
+        for k in ("contour", "notes", "range", "loud", "loud_hop", "note_model"):
+            analysis[k] = fixed[k]
+        analysis["vocal_fixes"] = fixes
+    keep_edited_notes(old, analysis)
+    (d / "analysis.json").write_text(json.dumps(analysis, separators=(",", ":")))
 
     if "key" not in analysis:
         stage(song_id, "Working out the key")
@@ -203,14 +222,206 @@ def renote(song_id: str, d: Path):
     old = json.loads((d / "analysis.json").read_text())
     stage(song_id, "Finding the vocal melody")
     analysis = analyse_vocals(d / "vocals.mp3")
-    for k in ("duration", "lead_split", "backing", "key"):
+    for k in ("duration", "lead_split", "backing", "key", "vocal_fixes", "audio_rev"):
         if k in old:
             analysis[k] = old[k]
     analysis["v"] = ANALYSIS_VERSION
     analysis["pitch_model"] = PITCH_MODEL
+    keep_edited_notes(old, analysis)
     (d / "analysis.json").write_text(json.dumps(analysis, separators=(",", ":")))
     lo, hi = analysis.get("range") or (None, None)
     db.update_song(song_id, status="ready", stage=None, error=None, note_low=lo, note_high=hi)
+
+
+# --------------------------------------------------------------------------
+# hand fixes: lead/backing mix-ups and edited notes (the editor page)
+# --------------------------------------------------------------------------
+
+FIX_MODES = ("swap", "lead", "backing")
+FIX_FADE_S = 0.03      # crossfade at the edges of a fixed range, so there's no click
+ORIG_FILES = {"vocals": "orig_vocals.mp3", "backing": "orig_backing.mp3", "accompaniment": "orig_accompaniment.mp3"}
+
+
+def keep_edited_notes(old: dict, new: dict):
+    """After a re-analysis: notes fixed by hand stay; the fresh detection becomes the
+    'detected' set the editor can reset to."""
+    if old.get("notes_edited") and old.get("notes") is not None:
+        new["notes_auto"] = new["notes"]
+        new["notes"] = old["notes"]
+        new["notes_edited"] = True
+        new["range"] = note_range(new["notes"])
+
+
+def _decode(p: Path, channels: int) -> np.ndarray:
+    out = subprocess.run(["ffmpeg", "-v", "error", "-i", str(p), "-ac", str(channels), "-ar", str(PLAYBACK_RATE),
+                          "-f", "f32le", "-"], capture_output=True, check=True).stdout
+    return np.frombuffer(out, dtype=np.float32).reshape(-1, channels).copy()
+
+
+def _encode(x: np.ndarray, dst: Path):
+    channels = x.shape[1]
+    tmp = dst.with_name("." + dst.name)
+    p = subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "f32le", "-ar", str(PLAYBACK_RATE), "-ac", str(channels),
+                        "-i", "-", "-b:a", "128k" if channels == 2 else "96k", "-f", "mp3", str(tmp)],
+                       input=np.ascontiguousarray(x, dtype=np.float32).tobytes(), capture_output=True)
+    if p.returncode != 0:
+        raise PipelineError("ffmpeg failed: " + p.stderr.decode(errors="replace")[-1500:])
+    tmp.replace(dst)
+
+
+def _fix_weight(n: int, t0: float, t1: float) -> tuple[int, int, np.ndarray]:
+    """Samples a..b of the fixed range and a 0..1 weight over them with short fades at both ends."""
+    sr, fade = PLAYBACK_RATE, int(FIX_FADE_S * PLAYBACK_RATE)
+    a, b = max(0, int(round(t0 * sr)) - fade // 2), min(n, int(round(t1 * sr)) + fade // 2)
+    w = np.ones(max(0, b - a), dtype=np.float32)
+    k = min(fade, len(w) // 2)
+    if k:
+        ramp = np.sin(np.linspace(0, np.pi / 2, k, dtype=np.float32)) ** 2
+        w[:k] = ramp
+        w[-k:] = ramp[::-1]
+    return a, b, w
+
+
+def apply_vocal_fixes(d: Path, fixes: list[dict]):
+    """Rebuild vocals.mp3 (lead = guide + melody source), backing.mp3 and accompaniment.mp3
+    from the untouched split, with each fix applied to its time range:
+      swap    - the separator swapped them: backing becomes lead and lead becomes backing
+      lead    - it's all the lead singer (a double or harmony got pulled out as backing)
+      backing - it's all backing vocals (an ad-lib or choir landed in the lead)
+    Always worked out from the original files, so fixes can be removed or changed later."""
+    if not ((d / "band.mp3").exists() and (d / "backing.mp3").exists() and (d / "vocals.mp3").exists()):
+        raise PipelineError("This song has no separate backing vocals yet; re-analyse it first.")
+    for stem, orig in ORIG_FILES.items():
+        if not (d / orig).exists():
+            shutil.copy2(d / f"{stem}.mp3", d / orig)
+    if not fixes:   # all fixes removed: back to what the separator made
+        for stem, orig in ORIG_FILES.items():
+            shutil.copy2(d / orig, d / f".{stem}.mp3")
+            (d / f".{stem}.mp3").replace(d / f"{stem}.mp3")
+            (d / orig).unlink()
+    else:
+        lead = _decode(d / ORIG_FILES["vocals"], 1)[:, 0]
+        back = _decode(d / ORIG_FILES["backing"], 2)
+        band = _decode(d / "band.mp3", 2)
+        n = min(len(lead), len(back), len(band))
+        lead, back, band = lead[:n], back[:n], band[:n]
+        for f in fixes:
+            a, b, w = _fix_weight(n, f["t0"], f["t1"])
+            if b <= a:
+                continue
+            L, B = lead[a:b].copy(), back[a:b].copy()
+            if f["mode"] == "swap":
+                nl, nb = B.mean(axis=1), np.repeat(L[:, None], 2, axis=1)
+            elif f["mode"] == "lead":
+                nl, nb = L + B.mean(axis=1), np.zeros_like(B)
+            else:   # backing
+                nl, nb = np.zeros_like(L), B + L[:, None]
+            lead[a:b] = L * (1 - w) + nl * w
+            back[a:b] = B * (1 - w[:, None]) + nb * w[:, None]
+        music = band + back
+        peak = float(np.abs(music).max()) if n else 0.0
+        if peak > 0.999:   # a louder lead moved into the music can push it over full scale
+            music *= 0.999 / peak
+        lp = float(np.abs(lead).max()) if n else 0.0
+        if lp > 0.999:
+            lead *= 0.999 / lp
+        _encode(lead[:, None], d / "vocals.mp3")
+        _encode(back, d / "backing.mp3")
+        _encode(music, d / "accompaniment.mp3")
+    for f in d.glob("*.*.mp3"):   # key/speed-shifted copies of the old audio
+        f.unlink(missing_ok=True)
+    (d / "levels.json").unlink(missing_ok=True)
+
+
+def merge_notes(old: list[dict], new: list[dict], ranges: list) -> list[dict]:
+    """old notes outside the ranges + new notes inside them (a note belongs where its middle is)."""
+    inside = lambda n: any(a <= (n["t0"] + n["t1"]) / 2 < b for a, b in ranges)  # noqa: E731
+    keep = [dict(n, f=0) for n in old if not inside(n)] + [dict(n, f=1) for n in new if inside(n)]
+    keep.sort(key=lambda n: (n["t0"], n["t1"]))
+    out = []
+    for n in keep:
+        if out and n["t0"] < out[-1]["t1"]:          # overlap at a range edge: the new note wins
+            p = out[-1]
+            if n["f"] >= p["f"]:
+                p["t1"] = n["t0"]
+            else:
+                n["t0"] = p["t1"]
+            if p["t1"] - p["t0"] < 0.05:
+                out.pop()
+            if n["t1"] - n["t0"] < 0.05:
+                continue
+        out.append(n)
+    return [{"t0": round(n["t0"], 3), "t1": round(n["t1"], 3), "midi": n["midi"]} for n in out]
+
+
+def refix(song_id: str, d: Path, fixes: list[dict], ranges: list):
+    """Apply the lead/backing fixes, then find the melody again where they changed things."""
+    pending = d / "pending.json"
+    try:
+        _refix(song_id, d, fixes, ranges)
+    except Exception as e:  # noqa: BLE001 - the song still works as it was; say what went wrong
+        log.exception("vocal fix failed for %s", song_id)
+        msg = str(e) if isinstance(e, PipelineError) else f"{type(e).__name__}: {e}"
+        db.update_song(song_id, status="ready", stage=None, error=f"Fixing the vocals didn't work: {msg}"[:2000])
+    finally:
+        pending.unlink(missing_ok=True)
+
+
+def _refix(song_id: str, d: Path, fixes: list[dict], ranges: list):
+    an = json.loads((d / "analysis.json").read_text())
+    stage(song_id, "Fixing the lead and backing vocals")
+    apply_vocal_fixes(d, fixes)
+    an["vocal_fixes"] = fixes
+    an["audio_rev"] = int(an.get("audio_rev", 0)) + 1
+    if ranges:
+        stage(song_id, "Finding the vocal melody again")
+        new = analyse_vocals(d / "vocals.mp3", tuning=(an.get("tuning") or 0) / 100)
+        for k in ("contour", "loud", "loud_hop"):
+            an[k] = new[k]
+        an["notes"] = merge_notes(an.get("notes") or [], new["notes"], ranges)
+        if an.get("notes_auto") is not None:
+            an["notes_auto"] = merge_notes(an["notes_auto"], new["notes"], ranges)
+        an["range"] = note_range(an["notes"])
+    tmp = d / ".analysis.json"
+    tmp.write_text(json.dumps(an, separators=(",", ":")))
+    tmp.replace(d / "analysis.json")
+    lo, hi = an.get("range") or (None, None)
+    db.update_song(song_id, status="ready", stage=None, error=None, note_low=lo, note_high=hi)
+
+
+def levels(d: Path) -> dict:
+    """Lead and backing vocal loudness on one scale (0-100, 100 = the lead's loud parts),
+    20 values a second, so the editor can show where the backing is louder than the lead:
+    usually a sign the separator swapped them. Cached until the audio changes."""
+    import librosa
+
+    cache = d / "levels.json"
+    if cache.exists():
+        try:
+            return json.loads(cache.read_text())
+        except ValueError:
+            pass
+    sr, hop = 16000, int(16000 * HOP_S)
+
+    def db_curve(p):
+        y, _ = librosa.load(str(p), sr=sr, mono=True)
+        rms = librosa.feature.rms(y=y, frame_length=1024, hop_length=hop, center=True)[0]
+        return 20 * np.log10(rms + 1e-9)
+
+    lead = db_curve(d / "vocals.mp3")
+    back = db_curve(d / "backing.mp3") if (d / "backing.mp3").exists() else None
+    gate = lead > (np.percentile(lead, 95) - 30)
+    ref = float(np.percentile(lead[gate], 98)) if gate.any() else float(lead.max())
+    k = int(round(LOUD_HOP_S / HOP_S))
+
+    def scale(x):
+        n = len(x) // k
+        v = x[: n * k].reshape(n, k).mean(axis=1)
+        return [int(round(t)) for t in np.clip((v - (ref - LOUD_SPAN_DB)) / LOUD_SPAN_DB * 100, 0, 100)]
+
+    out = {"hop": LOUD_HOP_S, "lead": scale(lead), "backing": scale(back) if back is not None else []}
+    cache.write_text(json.dumps(out, separators=(",", ":")))
+    return out
 
 
 # --------------------------------------------------------------------------
@@ -390,7 +601,8 @@ def split_lead(d: Path, vocals: Path, accomp: Path) -> tuple[Path, Path, tuple[P
 # analyse
 # --------------------------------------------------------------------------
 
-def analyse_vocals(vocals: Path) -> dict:
+def analyse_vocals(vocals: Path, tuning: float | None = None) -> dict:
+    """tuning: semitones off A440 to use instead of measuring it (re-analysing part of a song)."""
     import librosa
 
     sr = 16000
@@ -418,9 +630,8 @@ def analyse_vocals(vocals: Path) -> dict:
 
     # Recordings aren't always tuned to A440. Measure the offset and snap notes to the song's own tuning.
     v = midi[~np.isnan(midi)]
-    tuning = 0.0
-    if len(v) > 200:
-        tuning = float(np.angle(np.mean(np.exp(2j * np.pi * (v % 1)))) / (2 * np.pi))  # semitones, -0.5..0.5
+    if tuning is None:
+        tuning = 0.0 if len(v) <= 200 else float(np.angle(np.mean(np.exp(2j * np.pi * (v % 1)))) / (2 * np.pi))  # semitones, ±0.5
     note_model = "contour"
     notes = None
     if NOTE_MODEL in ("game", "game_checked") and (GAME_MODEL / "encoder.onnx").exists():
@@ -445,17 +656,19 @@ def analyse_vocals(vocals: Path) -> dict:
     if notes is None:
         notes = fallback
     contour = [None if np.isnan(v) else round(float(v), 2) for v in midi]
-    if notes:
-        pitches = np.array([nt["midi"] for nt in notes])
-        weights = np.array([nt["t1"] - nt["t0"] for nt in notes])
-        lo = int(_weighted_pct(pitches, weights, 3))
-        hi = int(_weighted_pct(pitches, weights, 97))
-        rng = [lo, hi]
-    else:
-        rng = None
+    rng = note_range(notes)
     # notes are in the song's tuning: the true pitch of a note is midi + tuning/100
     return {"hop": HOP_S, "contour": contour, "notes": notes, "range": rng, "tuning": round(tuning * 100, 1),
             "loud": loudness_curve(rms_db, gate), "loud_hop": LOUD_HOP_S, "note_model": note_model}
+
+
+def note_range(notes: list[dict]):
+    """Lowest and highest notes the melody really uses (3rd-97th percentile by time)."""
+    if not notes:
+        return None
+    pitches = np.array([nt["midi"] for nt in notes])
+    weights = np.array([max(1e-3, nt["t1"] - nt["t0"]) for nt in notes])
+    return [int(_weighted_pct(pitches, weights, 3)), int(_weighted_pct(pitches, weights, 97))]
 
 
 LOUD_HOP_S = 0.05   # the singer's loudness, 20 values a second
