@@ -180,3 +180,10 @@ canvas.vrp { width: 100%; height: 240px; display: block; background: rgba(0,0,0,
 .ed-fix { margin-top: 8px; }
 .ed-fix i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
 .how ul { margin: 8px 0 0; padding-left: 20px; } .how ul li { margin: 5px 0; }
+
+/* coach reply on lesson and song results */
+.coach-inline { margin: 10px 0; padding: 10px 12px; border-left: 3px solid var(--accent); background: var(--panel2); border-radius: 8px; }
+.coach-inline .coach-who { font-size: 12px; color: var(--dim); text-transform: uppercase; letter-spacing: .5px; }
+.coach-inline .coach-reply { margin: 4px 0 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.coach-inline .coach-q { margin: 8px 0 0; color: var(--accent); }
+.coach-inline .coach-ask input { min-width: 0; }

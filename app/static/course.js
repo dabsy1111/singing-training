@@ -459,6 +459,7 @@ route(/^\/lesson\/(\d\.\d)(?:\?(\w+))?$/, async (id, flag) => {
         ${score != null ? `<span style="font-size:20px"><b>${Math.round(score)}%</b></span>` : ''}</div>
       ${ev.detail ? `<p class="dim small">${esc(ev.detail)}</p>` : ''}
       ${ev.tip ? `<p>💡 ${esc(ev.tip)}</p>` : ''}
+      <div data-coach></div>
       ${res?.timingOffset && Math.abs(res.timingOffset) >= 0.06 ? `<p class="small dim">Your timing looked ${Math.round(Math.abs(res.timingOffset) * 1000)} ms ${res.timingOffset > 0 ? 'late' : 'early'}. <button data-latency="${Math.round(res.timingOffset * 1000)}">Adjust for this device</button></p>` : ''}
       ${take && take.size > 2000 ? `<div class="listenback"><b class="small">🎧 Hear yourself back</b> <span class="dim small">${s.recordTakes ? 'saved to Progress' : 'not saved; turn on “Record my takes” in Settings to keep takes'}</span><audio controls playsinline src="${URL.createObjectURL(take)}"></audio></div>` : ''}
       <div class="row"><button id="again">Try again</button>
@@ -472,6 +473,22 @@ route(/^\/lesson\/(\d\.\d)(?:\?(\w+))?$/, async (id, flag) => {
     const sb = out.querySelector('[data-skip]');
     if (sb) sb.onclick = () => skipLesson(id) || (location.hash = next && isUnlocked(next) ? `#/lesson/${next.id}` : '#/lessons');
     if (ev.passed && lesson.id === '1.5' && !daily) { C.warmups[today()] = true; saveCourse(); }
+
+    // Coach: pitch exercises with graded notes, plus breath, glide and ear-quiz results (text only).
+    const pitchRun = res && res.score != null && res.notes?.length >= 2;
+    const other = !res && (ev.detail || score != null) && ['glides', 'breath', 'ear'].includes(judged.pass?.metric);
+    if (pitchRun || other) {
+      const { sungSeconds, ...fields } = pitchRun ? coachRunFields(res, P) : {};
+      coachPanel(out.querySelector('[data-coach]'), {
+        exerciseType: 'lesson', lessonId: id, title: `Lesson ${id}: ${lesson.title}`, passed: ev.passed, ...fields,
+        pitchAccuracy: pitchRun ? fields.pitchAccuracy : undefined,
+        details: [fields.details,
+          `Result: ${ev.passed ? 'passed' : 'not passed yet'}${ev.detail ? ` (${ev.detail})` : ''}.`,
+          judged.pass?.metric === 'ear' && score != null ? `Ear quiz score ${Math.round(score)}%.` : null,
+          lesson.passText ? `To pass: ${lesson.passText}.` : null,
+          ev.tip ? `The app already showed this tip: ${ev.tip}` : null].filter(Boolean).join(' '),
+      });
+    }
   }
 
   const start = () => runLesson(judged, s, ex, report, offs, daily).catch(e => toast(e.message, 6000));

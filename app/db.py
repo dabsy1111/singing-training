@@ -52,6 +52,7 @@ DEFAULT_SETTINGS = {
     "refSound": "voice",     # reference notes in lessons and warm-ups: "voice" (sung) or "tone"
     "voiceType": "auto",     # "auto" (from your range), "low" or "high"
     "splitBacking": False,   # new songs: split backing vocals from the lead (off = guide vocal has every voice)
+    "coachInline": True,     # AI coach reply under lesson and song results (needs a coach key on the server)
 }
 
 

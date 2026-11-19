@@ -190,7 +190,8 @@ async function runSession() {
   if (question) { addMsg('user', question); $('msg').value = ''; }
   try {
     const r = await api('/api/session', { method: 'POST', body: {
-      exerciseType: kind === 'hold' ? 'Hold the pitch' : 'Match the note',
+      exerciseType: 'coach_drill', title: kind === 'hold' ? 'Hold the pitch' : 'Match the note',
+      tendency: summary.biasCents == null ? undefined : Math.abs(summary.biasCents) < 8 ? 'centred' : summary.biasCents < 0 ? 'flat' : 'sharp',
       targetNotes: results.map(t => t.target),
       pitchAccuracy: summary.inTunePct,
       detectedRange: summary.detectedRange,

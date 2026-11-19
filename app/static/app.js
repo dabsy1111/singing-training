@@ -761,6 +761,95 @@ function bindLatencyButton(el) {
   });
 }
 
+// ---------------------------------------------------------------- coach on the results screen
+/* After a lesson attempt or a song run, the numbers the grader already worked out (never audio)
+ * go to POST /api/session, the same route the /coach page uses, and the reply shows under the
+ * score. Any failure removes the panel: a missing coach never gets in the way of practising.
+ * Off with Settings → "Coach on results", or when the server has no coach key. */
+let COACH_STATUS = null;
+async function coachReady() {
+  try {
+    const s = await settings();
+    if (s.coachInline === false) return false;
+    COACH_STATUS ||= api('/api/coach/status').catch(() => ({ configured: false }));
+    return !!(await COACH_STATUS).configured;
+  } catch { return false; }
+}
+
+/* The coach fields from a graded run. res = Practice.stop() result; P = the Practice (for the
+ * pitch trail). A note counts as missed below the same 75% the results card calls "landed". */
+function coachRunFields(res, P) {
+  const notes = (res?.notes || []).filter(n => n.midi != null);
+  const dir = b => b == null ? 'not heard' : b <= -15 ? 'flat' : b >= 15 ? 'sharp' : 'late or unsteady';
+  const missedMap = new Map();
+  for (const n of notes.filter(n => n.score < 0.75)) {
+    const k = noteName(n.midi) + '|' + dir(n.bias);
+    missedMap.set(k, (missedMap.get(k) || 0) + 1);
+  }
+  const missedNotes = [...missedMap].sort((a, b) => b[1] - a[1]).slice(0, 20)
+    .map(([k, count]) => { const [note, direction] = k.split('|'); return { note, direction, count }; });
+  const flat = notes.filter(n => n.bias != null && n.bias <= -10).length;
+  const sharp = notes.filter(n => n.bias != null && n.bias >= 10).length;
+  const b = res?.bias;
+  const tendency = b == null ? undefined
+    : b <= -8 && flat >= 2 * sharp ? 'flat' : b >= 8 && sharp >= 2 * flat ? 'sharp'
+    : flat + sharp < notes.length * 0.3 ? 'centred' : 'mixed';
+  const weakestNotes = [...new Set([...notes].sort((x, y) => x.score - y.score).slice(0, 5).map(n => noteName(n.midi)))].slice(0, 3);
+  const sung = (P?.trail || []).filter(f => f.midi != null).map(f => f.midi).sort((x, y) => x - y);
+  const detectedRange = sung.length >= 50
+    ? { low: noteName(sung[Math.floor(sung.length * 0.05)]), high: noteName(sung[Math.floor(sung.length * 0.95)]) } : undefined;
+  const targetNotes = [...new Set([...notes].sort((x, y) => x.midi - y.midi).map(n => noteName(n.midi)))].slice(0, 24);
+  const landed = notes.filter(n => n.score >= 0.75).length;
+  const lines = [`${landed}/${notes.length} notes landed (75%+ grade)`];
+  if (b != null) lines.push(`average ${b > 0 ? '+' : ''}${Math.round(b)} cents`);
+  if (res?.speed && res.speed !== 100) lines.push(`song slowed to ${res.speed}%`);
+  if (res?.timingOffset && Math.abs(res.timingOffset) >= 0.06) lines.push(`timing about ${Math.round(Math.abs(res.timingOffset) * 1000)} ms ${res.timingOffset > 0 ? 'late' : 'early'}`);
+  return {
+    pitchAccuracy: res?.score != null ? Math.round(res.score * 10) / 10 : undefined,
+    detectedRange, missedNotes, tendency, weakestNotes, targetNotes,
+    details: 'Score is the app’s grade per note (70% holding within the green/amber cents window, 15% clean start, 15% transition), weighted by note length. ' + lines.join('; ') + '.',
+    sungSeconds: sung.length / 100,
+  };
+}
+
+/* Adds a coach panel to host and asks /api/session. body = the /api/session fields.
+ * Doesn't scroll or take focus. A follow-up question goes to /api/coach/chat, which carries
+ * the same conversation the /coach page shows. */
+async function coachPanel(host, body) {
+  if (!host || !(await coachReady())) return;
+  const box = document.createElement('div');
+  box.className = 'coach-inline';
+  box.innerHTML = '<span class="coach-who">Coach</span><p class="coach-reply dim">Coach is thinking…</p>';
+  host.appendChild(box);
+  const reply = box.querySelector('.coach-reply');
+  try {
+    const r = await api('/api/session', { method: 'POST', json: body });
+    if (!box.isConnected) return;
+    reply.textContent = r.reply; reply.classList.remove('dim');
+    if (r.notesAdded?.length) {
+      const n = document.createElement('p'); n.className = 'small dim';
+      n.textContent = r.notesAdded.map(x => `📝 Remembered: ${x.note}`).join(' · ');
+      box.appendChild(n);
+    }
+    const f = document.createElement('form');
+    f.className = 'row coach-ask';
+    f.innerHTML = '<input type="text" class="grow" maxlength="2000" placeholder="Ask the coach about this…" aria-label="Ask the coach"><button>Ask</button>';
+    f.onsubmit = async e => {
+      e.preventDefault();
+      const input = f.querySelector('input'), q = input.value.trim();
+      if (!q) return;
+      input.value = ''; f.querySelector('button').disabled = true;
+      const a = document.createElement('p'); a.className = 'coach-reply dim'; a.textContent = 'Coach is thinking…';
+      const qp = document.createElement('p'); qp.className = 'coach-q small'; qp.textContent = q;
+      box.insertBefore(qp, f); box.insertBefore(a, f);
+      try { const r2 = await api('/api/coach/chat', { method: 'POST', json: { message: q } }); a.textContent = r2.reply; a.classList.remove('dim'); }
+      catch { qp.remove(); a.remove(); }
+      f.querySelector('button').disabled = false;
+    };
+    box.appendChild(f);
+  } catch { box.remove(); }
+}
+
 // ---------------------------------------------------------------- timing check
 /* Measures how late your voice reaches the app compared with when a note was played:
  * output delay (Bluetooth can be 150-300 ms) plus mic delay. You hear a count-in, then
@@ -1467,6 +1556,17 @@ route(/^\/song\/([0-9a-f]{12})(?:\?lesson=(\d\.\d))?$/, async (id, lessonId) => 
         .catch(e => { toast('Couldn’t save run: ' + e.message); return null; });
     }
     lessonCtl?.onResult({ ...res, finished }, runP);
+    // Coach: only for a real attempt (graded notes and at least ~5 s of singing).
+    if (res.score !== null && res.notes.length >= 4) {
+      const cf = coachRunFields(res, P);
+      if (cf.sungSeconds >= 5) {
+        const { sungSeconds, ...fields } = cf;
+        coachPanel($('#res'), {
+          exerciseType: 'youtube_run', songId: id, lessonId: lessonId || undefined,
+          title: song.title + (part !== 'melody' ? ` (${PARTS[part].label})` : ''), ...fields,
+        });
+      }
+    }
     if (finished && $('#loop').checked) { P.pos = sec().from; setTimeout(go, 1200); }
     else if (finished) P.pos = sec().from;
     return res;
@@ -1998,6 +2098,7 @@ route(/^\/settings$/, async () => {
       <label>Scroll speed (px/s) <input type="number" name="pxPerSecond" min="60" max="400" step="10" value="${s.pxPerSecond}"></label>
       <label><input type="checkbox" name="octaveFree" ${s.octaveFree ? 'checked' : ''}> Any octave counts</label>
       <label><input type="checkbox" name="recordTakes" ${s.recordTakes ? 'checked' : ''}> Record my takes</label>
+      <label><input type="checkbox" name="coachInline" ${s.coachInline !== false ? 'checked' : ''}> Coach on results (AI feedback under lesson and song scores)</label>
       <label><input type="checkbox" name="echoCancellation" ${s.echoCancellation ? 'checked' : ''}> Echo cancellation (only if you can't use headphones)</label>
       <label>Mic filter: <b id="mfName">${MIC_FILTER_NAMES[s.micFilter ?? 2]}</b>
         <input type="range" name="micFilter" min="0" max="3" step="1" value="${s.micFilter ?? 2}"></label>

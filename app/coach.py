@@ -249,6 +249,12 @@ def _ago(ts):
     return "yesterday" if days == 1 else f"{days} days ago"
 
 
+def _short(text, limit=600):
+    """A previous session on one line, without the long Details part if it doesn't fit."""
+    t = " | ".join(l for l in text.splitlines() if l and l != "PRACTICE SESSION")
+    return t if len(t) <= limit else t[:limit].rsplit(" ", 1)[0] + " …"
+
+
 def memory_block(uid, skip_session=None):
     """Appended to the system prompt: every recent note (they're short), then the last few sessions
     so the coach can spot trends. The session being discussed goes in the user message instead."""
@@ -257,7 +263,7 @@ def memory_block(uid, skip_session=None):
     lines = ["## What you remember about this student"]
     lines += [f"- {n['note']}" for n in notes] or ["- Nothing yet."]
     lines += ["", "## Their previous practice sessions (newest first)"]
-    lines += [f"- {_ago(s['created'])}: {s['text']}" for s in sessions] or ["- None yet."]
+    lines += [f"- {_ago(s['created'])}: {_short(s['text'])}" for s in sessions] or ["- None yet."]
     return "\n".join(lines)
 
 
@@ -386,20 +392,46 @@ def _clip_list(v, n=50, each=200):
     return [str(x)[:each] for x in v[:n]]
 
 
+EXERCISE_LABELS = {"lesson": "Course lesson", "youtube_run": "Sing-along with a song", "coach_drill": "Coach page drill"}
+
+
 class SessionIn(BaseModel):
     userId: str | None = None
-    exerciseType: str = Field(min_length=1, max_length=60)
+    exerciseType: str = Field(min_length=1, max_length=60)   # lesson | youtube_run | coach_drill (others allowed)
+    title: str | None = Field(default=None, max_length=200)  # "Lesson 3.2: Clean starts", a song title, a drill name
+    lessonId: str | None = Field(default=None, max_length=20)
+    songId: str | None = Field(default=None, max_length=40)
+    passed: bool | None = None                                # lessons: did this attempt pass
     targetNotes: list[Any] = Field(default_factory=list)
-    pitchAccuracy: float | None = Field(default=None, ge=0, le=100)   # % of sung time within 50 cents
-    detectedRange: Any = None                                         # {"low": "C3", "high": "G4"} or "C3–G4"
-    missedNotes: list[Any] = Field(default_factory=list)
+    pitchAccuracy: float | None = Field(default=None, ge=0, le=100)   # 0-100; what it measures is said in details
+    detectedRange: Any = None                                 # {"low": "C3", "high": "G4"} or "C3–G4"
+    missedNotes: list[Any] = Field(default_factory=list)      # "E3" or {"note": "E3", "direction": "flat", "count": 2}
+    tendency: str | None = Field(default=None, max_length=20) # sharp | flat | mixed | centred
+    weakestNotes: list[Any] = Field(default_factory=list)
     userMessage: str | None = Field(default=None, max_length=2000)
-    details: str | None = Field(default=None, max_length=4000)        # optional per-note breakdown (text)
+    details: str | None = Field(default=None, max_length=4000)  # anything else, as text
 
-    @field_validator("targetNotes", "missedNotes")
+    @field_validator("targetNotes", "weakestNotes")
     @classmethod
     def _lists(cls, v):
         return _clip_list(v)
+
+    @field_validator("missedNotes")
+    @classmethod
+    def _missed(cls, v):
+        """Keep {note, direction, count} objects as small dicts; anything else becomes a string."""
+        out = []
+        for x in (v if isinstance(v, list) else [v])[:50]:
+            if isinstance(x, dict):
+                d = {"note": str(x.get("note", "?"))[:12]}
+                if x.get("direction"):
+                    d["direction"] = str(x["direction"])[:30]
+                if isinstance(x.get("count"), int) and x["count"] > 1:
+                    d["count"] = min(x["count"], 9999)
+                out.append(d)
+            elif x is not None:
+                out.append(str(x)[:40])
+        return out
 
 
 def _fmt_range(r):
@@ -409,20 +441,39 @@ def _fmt_range(r):
     return str(r)[:40] if r else None
 
 
+def _fmt_missed(m):
+    if isinstance(m, dict):
+        t = m["note"] + (f" ({m['direction']})" if m.get("direction") else "")
+        return t + (f" ×{m['count']}" if m.get("count") else "")
+    return m
+
+
+def _missed_name(m):
+    return m["note"] if isinstance(m, dict) else m
+
+
 def session_text(s: SessionIn) -> str:
     """The session summary as structured text: the only thing the model learns about the singing."""
-    lines = ["PRACTICE SESSION", f"Exercise: {s.exerciseType}"]
+    kind = EXERCISE_LABELS.get(s.exerciseType, s.exerciseType)
+    lines = ["PRACTICE SESSION", f"Exercise: {kind}" + (f": {s.title}" if s.title else "")]
+    if s.passed is not None:
+        lines.append(f"Lesson result: {'passed' if s.passed else 'not passed yet'}")
     if s.targetNotes:
         lines.append(f"Target notes: {', '.join(s.targetNotes)}")
     if s.pitchAccuracy is not None:
-        lines.append(f"Pitch accuracy: {round(s.pitchAccuracy)}% of sung time within 50 cents")
+        lines.append(f"Pitch accuracy: {round(s.pitchAccuracy)}%")
     rng = _fmt_range(s.detectedRange)
     if rng:
         lines.append(f"Detected range this session: {rng}")
-    hit = [n for n in s.targetNotes if n not in s.missedNotes]
+    if s.tendency:
+        lines.append(f"Tendency: {s.tendency}")
+    missed_names = {_missed_name(m) for m in s.missedNotes}
     if s.targetNotes:
-        lines.append(f"Notes hit: {', '.join(hit) or 'none'}")
-    lines.append(f"Notes missed: {', '.join(s.missedNotes) or 'none'}")
+        lines.append(f"Notes hit: {', '.join(n for n in s.targetNotes if n not in missed_names) or 'none'}")
+    if s.targetNotes or s.missedNotes:
+        lines.append(f"Notes missed: {', '.join(_fmt_missed(m) for m in s.missedNotes) or 'none'}")
+    if s.weakestNotes:
+        lines.append(f"Weakest notes: {', '.join(s.weakestNotes)}")
     if s.details:
         lines.append("Details: " + s.details.strip())
     return "\n".join(lines)
