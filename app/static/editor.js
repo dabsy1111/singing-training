@@ -34,6 +34,7 @@
           <li><b>A missing note:</b> double-tap an empty spot to add one there. <b>An extra note:</b> tap it and press Delete.</li>
           <li><b>A whole stretch is wrong</b> (an octave out, or notes all over the place): drag along the time strip at the top to pick it, then use the range buttons.</li>
           <li><b>The guide vocal sings the harmony or a backing part</b>, or the real tune is in the backing vocals: pick the stretch along the top strip and choose what it really is. The bottom lane shows the lead singer in blue and the backing vocals in amber; where amber sits above blue, they’re probably swapped.</li>
+          <li><b>The whole song is wrong</b> (say, the guide should have the backing vocals too): press <b>Whole song</b>, then choose what the vocals really are.</li>
           <li><b>Select all</b> (or Ctrl+A) picks every note, or every note in the picked stretch, so you can move them all at once: up or down, an octave, earlier or later.</li>
           <li>Drag the background to look around, pinch or use − + to zoom. Tap the top strip to move the playhead. Changes save as you go; Undo works until you leave the page.</li>
         </ul>
@@ -46,6 +47,7 @@
         <label><input type="checkbox" id="mBand"> Music</label>
         <label><input type="checkbox" id="mTone" checked> Note tones</label>
         <span class="grow"></span>
+        <button id="edWhole" title="Pick the whole song as the range, for lead/backing fixes across all of it">Whole song</button>
         <button id="edAll" title="Select every note (Ctrl+A)">Select all</button>
         <button id="edUndo" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
         <button id="edRedo" title="Redo (Ctrl+Shift+Z)" disabled>↷</button>
@@ -114,7 +116,7 @@
       undo.push(before); if (undo.length > 200) undo.shift();
       redo.length = 0; undoButtons(); scheduleSave(); renderPanel();
     }
-    function undoButtons() { $('#edUndo').disabled = !undo.length || busy; $('#edRedo').disabled = !redo.length || busy; $('#edAll').disabled = busy; }
+    function undoButtons() { $('#edUndo').disabled = !undo.length || busy; $('#edRedo').disabled = !redo.length || busy; $('#edAll').disabled = busy; $('#edWhole').disabled = busy; }
     function restore(json) { notes = JSON.parse(json); sel = new Set(); scheduleSave(); renderPanel(); undoButtons(); }
     function doUndo() { if (!undo.length || busy) return; redo.push(snapshot()); restore(undo.pop()); }
     function doRedo() { if (!redo.length || busy) return; undo.push(snapshot()); restore(redo.pop()); }
@@ -510,6 +512,13 @@
     // Select every note, or every note in the picked range if there is one.
     function selectAll() { if (busy) return; sel = new Set(range ? notes.filter(inRange) : notes); renderPanel(); }
     $('#edAll').onclick = selectAll;
+    $('#edWhole').onclick = () => {
+      if (busy) return;
+      range = { a: 0, b: dur() }; sel = new Set();
+      v.pps = clamp((W - GUT) / Math.max(1, dur()), 4, 600); v.t0 = 0; centreOn(0, dur());
+      renderPanel();
+      panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    };
 
     function onKey(e) {
       if (e.target.closest('input, textarea, select') || busy) return;
