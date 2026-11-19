@@ -141,7 +141,9 @@ def client():
         raise HTTPException(503, "The coach needs OPENAI_API_KEY set on the server (see the README).")
     if _client is None:
         from openai import OpenAI
-        _client = OpenAI(timeout=60, max_retries=2)   # reads OPENAI_API_KEY / OPENAI_BASE_URL itself
+        # .strip(): a key pasted into .env can carry a stray space or a Windows line ending (-> 401)
+        key = os.environ["OPENAI_API_KEY"].strip().strip('"').strip("'").strip()
+        _client = OpenAI(api_key=key, timeout=60, max_retries=2)   # OPENAI_BASE_URL is read from the env
     return _client
 
 
