@@ -2009,6 +2009,12 @@ route(/^\/settings$/, async () => {
     </div>
     <div class="row"><button class="primary" id="save">Save</button>
       <button id="preset-b">Beginner tolerances</button><button id="preset-a">Advanced tolerances</button></div>
+    <h2>New songs</h2>
+    <div class="card">
+      <label class="row"><input type="checkbox" id="splitBacking" ${s.splitBacking ? 'checked' : ''}> Split backing vocals from the lead</label>
+      <p class="small dim">Off: songs are only split into vocals and music. The guide vocal is every voice in the song, and the notes are found from all of them. On: a second step pulls the backing vocals out of the guide onto their own slider, so harmonies don’t pull the notes off the tune, but sometimes it takes the wrong part (fixable in the editor).</p>
+      <div class="row" id="splitApply"></div>
+    </div>
     <h2>Timing on this device</h2>
     <div class="card">
       <div class="row"><label class="dim small">Extra delay (ms) <input type="number" id="lat" min="-300" max="1000" step="10" value="${deviceLatencyMs()}"></label>
@@ -2037,6 +2043,19 @@ route(/^\/settings$/, async () => {
       : playSung(ctx, out, root + iv, t + k * 0.45, 0.42, 0.25, 'ah', pick));
     playSung(ctx, out, root, t + 4.3, 1.6, 0.25, 'oo', pick);
   };
+  async function splitInfo() {
+    let st; try { st = await api('/api/split-status'); } catch { return; }
+    const el = $('#splitApply'); if (!el) return;
+    if (!st.todo && !st.stuck) { el.innerHTML = ''; return; }
+    el.innerHTML = st.todo ? `<span class="small grow">${st.todo === 1 ? '1 song you already have' : `${st.todo} songs you already have`} ${st.split ? (st.todo === 1 ? 'has its' : 'have their') + ' backing vocals mixed in with the lead' : (st.todo === 1 ? 'still has its' : 'still have their') + ' backing vocals split out'}. ${st.split ? 'Splitting takes a few minutes a song.' : 'Putting the backing vocals back takes about a minute a song.'} Lyrics, key, scores and notes you fixed by hand are kept.</span><button id="splitGo">Redo ${st.todo === 1 ? 'it' : 'them'}</button>`
+      : `<span class="small dim">${st.stuck} older song${st.stuck === 1 ? '' : 's'} can’t be split again (the original audio is gone).</span>`;
+    $('#splitGo') && ($('#splitGo').onclick = async () => {
+      try { const r = await api('/api/songs/apply-split-setting', { method: 'POST' }); toast(`${r.queued} song${r.queued === 1 ? '' : 's'} queued. Watch the song list.`); } catch (e) { toast(e.message); }
+      splitInfo();
+    });
+  }
+  $('#splitBacking').onchange = async e => { await saveSettings({ splitBacking: e.target.checked }); toast(e.target.checked ? 'New songs will have the backing vocals split out' : 'New songs: just vocals and music'); splitInfo(); };
+  splitInfo();
   $('#latSave').onclick = () => { setDeviceLatencyMs(Number($('#lat').value)); toast('Saved for this device'); };
   $('#latCheck').onclick = async () => { await timingCheck(); $('#lat').value = deviceLatencyMs(); };
   $('#save').onclick = async () => {

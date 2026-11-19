@@ -175,7 +175,7 @@ def songs():
             has_src = (pipeline.song_dir(r["id"]) / "source.wav").exists()
             r["outdated"] = bool(v and v < pipeline.ANALYSIS_VERSION and (has_src or pipeline.can_renote(pipeline.song_dir(r["id"]))))
             # analysed before backing vocals were kept as their own stem
-            r["no_backing"] = bool(not r["outdated"] and has_src and _no_backing(r["id"]))
+            r["no_backing"] = bool(not r["outdated"] and has_src and st.get("splitBacking") and _no_backing(r["id"]))
     return rows
 
 
@@ -279,6 +279,44 @@ def split_backing_all():
             _reanalyse(r["id"])
             done.append(r["id"])
     return {"queued": done}
+
+
+def _split_status():
+    """Which ready songs don't match Settings → 'Split backing vocals from the lead'."""
+    want = bool(db.get_settings().get("splitBacking"))
+    todo, stuck = [], []
+    for r in db.list_songs():
+        if r["status"] != "ready":
+            continue
+        d = pipeline.song_dir(r["id"])
+        split = pipeline.is_split(d)
+        if split and not want:
+            todo.append(r["id"])                     # quick: mix the backing back into the guide
+        elif not split and want:
+            try:
+                an = json.loads((d / "analysis.json").read_text())
+            except (OSError, ValueError):
+                continue
+            if not an.get("lead_split"):
+                (todo if (d / "source.wav").exists() else stuck).append(r["id"])   # needs the separator again
+    return want, todo, stuck
+
+
+@app.get("/api/split-status")
+def split_status():
+    want, todo, stuck = _split_status()
+    return {"split": want, "todo": len(todo), "stuck": len(stuck)}
+
+
+@app.post("/api/songs/apply-split-setting")
+def apply_split_setting():
+    """Redo existing songs to match the setting. Off: backing vocals go back into the guide
+    (about a minute a song). On: the songs are split again (a few minutes each)."""
+    want, todo, _ = _split_status()
+    for sid in todo:
+        db.update_song(sid, status="queued", stage="Waiting in queue", error=None)
+        pipeline.enqueue(sid, {"reanalyse": True} if want else {"unsplit": True})
+    return {"queued": len(todo)}
 
 
 @app.delete("/api/songs/{song_id}")
@@ -396,7 +434,7 @@ def put_vocal_fixes(song_id: str, body: VocalFixesIn):
     d = pipeline.song_dir(song_id)
     p, an = _read_analysis(song_id)
     if not an.get("backing") or not (d / "backing.mp3").exists():
-        raise HTTPException(400, "This song has the backing vocals mixed into the music. Re-analyse it first (song list → ↻ or the song page).")
+        raise HTTPException(400, "This song's backing vocals aren't on a track of their own (Settings → Split backing vocals from the lead).")
     dur = float(an.get("duration") or s.get("duration") or 0)
     if len(body.fixes) > 300:
         raise HTTPException(400, "Too many fixes")

@@ -51,6 +51,7 @@ DEFAULT_SETTINGS = {
     "micFilter": 2,          # 0 off, 1 light, 2 normal, 3 strong (see static/mic-filter.js)
     "refSound": "voice",     # reference notes in lessons and warm-ups: "voice" (sung) or "tone"
     "voiceType": "auto",     # "auto" (from your range), "low" or "high"
+    "splitBacking": False,   # new songs: split backing vocals from the lead (off = guide vocal has every voice)
 }
 
 

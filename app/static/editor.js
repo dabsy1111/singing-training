@@ -377,7 +377,7 @@
       g.font = '10px system-ui'; g.textBaseline = 'top';
       g.fillStyle = '#7aa2ff'; g.fillText('lead', 4, lt + 3);
       if (an.backing) { g.fillStyle = '#f5b14c'; g.fillText('backing', 4, lt + 15); }
-      else { g.fillStyle = 'rgba(200,205,220,0.6)'; g.fillText('backing vocals are mixed into the music for this song', GUT + 30, lt + 3); }
+      else { g.fillStyle = 'rgba(200,205,220,0.6)'; g.fillText(an.lead_split ? 'backing vocals are mixed into the music for this song' : 'every voice is in the guide vocal for this song', GUT + 30, lt + 3); }
       // note names
       g.fillStyle = '#0f1116'; g.fillRect(0, pt, GUT, ph);
       g.save(); g.beginPath(); g.rect(0, pt, GUT, ph); g.clip();
@@ -561,7 +561,7 @@
           </div>
           ${an.backing ? `<div class="ed-vox"><span class="dim small">The vocals here are really…</span>
             ${Object.entries(FIX_INFO).map(([k, I]) => `<button data-fix="${k}" title="${esc(I.desc)}">${esc(I.label)}</button>`).join('')}</div>`
-            : `<p class="dim small">Lead/backing fixes need the backing vocals on their own track. Re-analyse this song from the song page first.</p>`}
+            : `<p class="dim small">${an.lead_split ? 'Lead/backing fixes need the backing vocals on their own track. Re-analyse this song from the song page first.' : 'Every voice is in the guide vocal for this song, so there’s nothing to swap.'}</p>`}
         </div>`;
       }
       if (!list.length && !range) {

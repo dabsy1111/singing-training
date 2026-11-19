@@ -96,7 +96,10 @@ def process(song_id: str, job: dict):
     src = d / "source.wav"
     if "fix_vocals" in job:
         return refix(song_id, d, job["fix_vocals"], job.get("ranges") or [])
-    if job.get("reanalyse") and can_renote(d):
+    split_wanted = split_backing_wanted()
+    if (job.get("unsplit") or (job.get("reanalyse") and not split_wanted)) and is_split(d):
+        return unsplit(song_id, d)
+    if job.get("reanalyse") and can_renote(d) and split_wanted:
         return renote(song_id, d)
 
     if not src.exists():
@@ -128,11 +131,11 @@ def process(song_id: str, job: dict):
 
     guide, music, backing = vocals, accomp, None
     lead_split = False
-    if LEAD_SPLIT and KARAOKE_MODEL.exists():
+    if LEAD_SPLIT and KARAOKE_MODEL.exists() and split_wanted:
         stage(song_id, f"Separating the lead singer from backing vocals (~{max(1, round(duration / 60 * 0.5))} min)")
         guide, music, backing = split_lead(d, vocals, accomp)
         lead_split = True
-    elif LEAD_SPLIT:
+    elif LEAD_SPLIT and split_wanted:
         log.warning("lead/backing split skipped: %s not found", KARAOKE_MODEL)
 
     stage(song_id, "Finding the vocal melody")
@@ -202,6 +205,63 @@ def process(song_id: str, job: dict):
             log.info("no lyrics for %s: %s", song_id, e)
 
     lo, hi = analysis.get("range") or (None, None)
+    db.update_song(song_id, status="ready", stage=None, error=None, note_low=lo, note_high=hi)
+
+
+def split_backing_wanted() -> bool:
+    """Settings → 'Split backing vocals from the lead'. Off: the guide vocal is every voice
+    Demucs pulled out of the music, and the melody is found from all of them."""
+    try:
+        return bool(db.get_settings().get("splitBacking"))
+    except Exception:  # noqa: BLE001 - no database (tools, tests): use the old behaviour
+        return True
+
+
+def is_split(d: Path) -> bool:
+    try:
+        an = json.loads((d / "analysis.json").read_text())
+    except (OSError, ValueError):
+        return False
+    return bool(an.get("backing")) and (d / "backing.mp3").exists() and (d / "band.mp3").exists()
+
+
+def unsplit(song_id: str, d: Path):
+    """Put the backing vocals back into the guide vocal: guide = lead + backing (the same
+    voices Demucs split from the music, in mono), music = the band alone. Quick: no
+    separation, just a mix of the stems the song already has, then the melody found again.
+    Any lead/backing fixes from the editor stop mattering (they only moved sound between
+    the two), so they're dropped. Notes fixed by hand are kept."""
+    an = json.loads((d / "analysis.json").read_text())
+    stage(song_id, "Putting the backing vocals back into the guide vocal")
+    lead = _decode(d / "vocals.mp3", 1)[:, 0]
+    back = _decode(d / "backing.mp3", 2).mean(axis=1)
+    n = min(len(lead), len(back))
+    vox = lead[:n] + back[:n]
+    peak = float(np.abs(vox).max()) if n else 0.0
+    if peak > 0.999:
+        vox *= 0.999 / peak
+    _encode(vox[:, None], d / "vocals.mp3")
+    shutil.copy2(d / "band.mp3", d / ".accompaniment.mp3")
+    (d / ".accompaniment.mp3").replace(d / "accompaniment.mp3")
+    for f in ["band.mp3", "backing.mp3", "levels.json", *ORIG_FILES.values()]:
+        (d / f).unlink(missing_ok=True)
+    for f in d.glob("*.*.mp3"):
+        f.unlink(missing_ok=True)
+    stage(song_id, "Finding the vocal melody")
+    out = analyse_vocals(d / "vocals.mp3", tuning=(an.get("tuning") or 0) / 100)
+    out["duration"] = an.get("duration")
+    if "key" in an:
+        out["key"] = an["key"]
+    out["v"] = ANALYSIS_VERSION
+    out["lead_split"] = False
+    out["backing"] = False
+    out["pitch_model"] = PITCH_MODEL
+    out["audio_rev"] = int(an.get("audio_rev", 0)) + 1
+    keep_edited_notes(an, out)
+    tmp = d / ".analysis.json"
+    tmp.write_text(json.dumps(out, separators=(",", ":")))
+    tmp.replace(d / "analysis.json")
+    lo, hi = out.get("range") or (None, None)
     db.update_song(song_id, status="ready", stage=None, error=None, note_low=lo, note_high=hi)
 
 
