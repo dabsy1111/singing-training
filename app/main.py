@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import auth, coach, db, lyrics, pipeline
+from . import auth, coach, db, lyrics, pipeline, storage
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("main")
@@ -416,9 +416,12 @@ def delete_song(song_id: str):
         raise HTTPException(404, "No such song")
     if s["status"] == "processing":
         raise HTTPException(409, "It's being processed right now; try again when it finishes")
+    freed = storage.song_usage(song_id)["total"]
     shutil.rmtree(pipeline.song_dir(song_id), ignore_errors=True)
+    for f in UPLOAD_DIR.glob(f"{song_id}.*"):
+        f.unlink(missing_ok=True)
     db.delete_song(song_id)
-    return {"ok": True}
+    return {"ok": True, "freed": freed}
 
 
 @app.get("/api/songs/{song_id}/analysis")
@@ -770,6 +773,73 @@ def delete_run(run_id: int):
         (TAKES_DIR / r["take"]).unlink(missing_ok=True)
     db.delete_run(run_id)
     return {"ok": True}
+
+
+@app.delete("/api/runs/{run_id}/take")
+def delete_take(run_id: int):
+    """Delete just the recording; the score stays in Progress."""
+    r = db.get_run(run_id)
+    if not r:
+        raise HTTPException(404)
+    if r.get("take"):
+        (TAKES_DIR / r["take"]).unlink(missing_ok=True)
+        db.set_run_take(run_id, None)
+    return {"ok": True}
+
+
+# --------------------------------------------------------------------------
+# storage: what's on the disk and clearing it
+# --------------------------------------------------------------------------
+
+class TakesIn(BaseModel):
+    ids: list[int]
+    keep_scores: bool = True
+
+
+@app.get("/api/storage")
+def storage_report():
+    return storage.report(DATA_DIR, TAKES_DIR, UPLOAD_DIR)
+
+
+@app.post("/api/storage/takes/delete")
+def storage_delete_takes(body: TakesIn):
+    freed = n = 0
+    for rid in body.ids:
+        r = db.get_run(rid)
+        if not r:
+            continue
+        if r.get("take"):
+            p = TAKES_DIR / r["take"]
+            if p.exists():
+                freed += p.stat().st_size
+            p.unlink(missing_ok=True)
+        if body.keep_scores:
+            db.set_run_take(rid, None)
+        else:
+            db.delete_run(rid)
+        n += 1
+    return {"deleted": n, "freed": freed}
+
+
+@app.post("/api/storage/songs/{song_id}/clear-copies")
+def storage_clear_copies(song_id: str):
+    s = db.get_song(song_id)
+    if not s:
+        raise HTTPException(404, "No such song")
+    if s["status"] == "processing":
+        raise HTTPException(409, "It's being processed right now; try again when it finishes")
+    return {"freed": storage.clear_copies(song_id)}
+
+
+@app.post("/api/storage/clear-copies")
+def storage_clear_all_copies():
+    freed = sum(storage.clear_copies(s["id"]) for s in db.list_songs() if s["status"] != "processing")
+    return {"freed": freed}
+
+
+@app.post("/api/storage/clean-leftovers")
+def storage_clean_leftovers():
+    return {"freed": storage.clean_orphans(DATA_DIR, TAKES_DIR, UPLOAD_DIR)}
 
 
 @app.get("/media/takes/{name}")

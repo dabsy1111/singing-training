@@ -2199,6 +2199,8 @@ route(/^\/settings$/, async () => {
         <button id="latSave">Save</button><button class="primary" id="latCheck">Run timing check</button></div>
       <p class="small dim">Each phone or computer keeps its own value. The check runs once per session before your first song or warm-up; run it again whenever you switch headphones (for example, AirPods to wired).</p>
     </div>
+    <h2>Storage</h2>
+    <div class="card row"><span class="grow small" id="stSum">Songs and recordings on the server’s disk.</span><a class="btn" href="#/storage">Manage storage →</a></div>
     <div class="card small dim">App version ${esc(health.version || '?')}${health.built ? ` (built ${esc(new Date(health.built).toLocaleString())})` : ''} · page loaded as ${esc(window.VL_VERSION || '?')}${health.version && window.VL_VERSION && health.version !== window.VL_VERSION ? ' · <b>out of date: reload the page</b>' : ''}<br>Server: yt-dlp ${esc(health.yt_dlp || '?')} · separation ${esc(health.demucs_model || '?')} · pitch ${esc(health.crepe_model || '?')} · ${health.queue ?? '?'} queued</div>`;
   const form = $('#form');
   const mfHelp = [
@@ -2234,6 +2236,7 @@ route(/^\/settings$/, async () => {
   }
   $('#splitBacking').onchange = async e => { await saveSettings({ splitBacking: e.target.checked }); toast(e.target.checked ? 'New songs will have the backing vocals split out' : 'New songs: just vocals and music'); splitInfo(); };
   splitInfo();
+  api('/api/storage').then(st => { const el = $('#stSum'); if (el) el.textContent = `Vocal Lab is using ${fmtBytes(st.app.total)} (${st.songs.length} songs, ${st.takes.length} recordings). ${fmtBytes(st.disk.free)} free on the disk.`; }).catch(() => {});
   $('#latSave').onclick = () => { setDeviceLatencyMs(Number($('#lat').value)); toast('Saved for this device'); };
   $('#latCheck').onclick = async () => { await timingCheck(); $('#lat').value = deviceLatencyMs(); };
   $('#save').onclick = async () => {
@@ -2244,6 +2247,110 @@ route(/^\/settings$/, async () => {
     await saveSettings(patch); toast('Saved');
   };
 }, 'settings');
+
+// ---- storage: what each song and recording takes up on the server's disk
+const fmtBytes = b => b >= 1e9 ? (b / 1e9).toFixed(2) + ' GB' : b >= 1e6 ? (b / 1e6).toFixed(b >= 1e8 ? 0 : 1) + ' MB' : b >= 1e3 ? Math.round(b / 1e3) + ' KB' : (b || 0) + ' B';
+const PART_LABELS = { audio: 'audio', copies: 'key/speed copies', source: 'original download', data: 'notes & lyrics' };
+route(/^\/storage$/, async () => {
+  view.innerHTML = `<h1>Storage</h1><p class="dim">Loading…</p>`;
+  const st = await api('/api/storage');
+  const { disk, app: a } = st;
+  const pct = x => Math.max(0, Math.min(100, x / disk.total * 100));
+  const copies = st.songs.reduce((t, x) => t + x.parts.copies, 0);
+  const takeTotal = st.takes.reduce((t, x) => t + x.size, 0);
+  const sel = new Set();
+  view.innerHTML = `<h1>Storage</h1>
+    <div class="card">
+      <div class="row"><b class="grow">Vocal Lab is using ${fmtBytes(a.total)}</b><span class="small dim">${fmtBytes(disk.free)} free of ${fmtBytes(disk.total)}</span></div>
+      <div class="st-bar" title="Disk">
+        <i style="width:${pct(a.songs)}%;background:var(--accent)" title="Songs ${fmtBytes(a.songs)}"></i><i style="width:${pct(a.takes)}%;background:#d9a441" title="Recordings ${fmtBytes(a.takes)}"></i><i style="width:${pct(Math.max(0, disk.used - a.songs - a.takes))}%;background:rgba(255,255,255,.18)" title="Everything else on the disk"></i>
+      </div>
+      <div class="row small" style="flex-wrap:wrap;gap:14px">
+        <span><i class="st-dot" style="background:var(--accent)"></i>Songs ${fmtBytes(a.songs)}</span>
+        <span><i class="st-dot" style="background:#d9a441"></i>Recordings ${fmtBytes(a.takes)}</span>
+        <span><i class="st-dot" style="background:rgba(255,255,255,.18)"></i>Other files on the disk ${fmtBytes(Math.max(0, disk.used - a.songs - a.takes))}</span>
+        <span class="dim">Database ${fmtBytes(a.database)}${a.leftovers ? ` · leftovers ${fmtBytes(a.leftovers)}` : ''}</span>
+      </div>
+    </div>
+    ${copies ? `<div class="card row"><span class="grow small">${fmtBytes(copies)} is key-changed and slowed-down copies of songs. They’re rebuilt the next time you pick that key or speed, so they’re safe to clear.</span><button id="clearCopies">Clear all copies</button></div>` : ''}
+    ${st.orphans.length ? `<div class="card row"><span class="grow small">${fmtBytes(a.leftovers)} in ${st.orphans.length} leftover file${st.orphans.length === 1 ? '' : 's'} nothing in the app points to any more (${[...new Set(st.orphans.map(o => o.kind + 's'))].join(', ')}).</span><button id="cleanLeft" class="danger">Delete leftovers</button></div>` : ''}
+    <h2>Songs <span class="small dim">${st.songs.length} · ${fmtBytes(a.songs)}</span></h2>
+    <div class="card table-wrap"><table id="stSongs"><tr><th>Song</th><th style="text-align:right">Size</th><th></th></tr>
+    ${st.songs.map(x => `<tr data-id="${x.id}">
+      <td><div>${esc(x.title)}</div><div class="small dim">${GROUPS_ORDER.filter(k => x.parts[k]).map(k => `${PART_LABELS[k]} ${fmtBytes(x.parts[k])}`).join(' · ') || 'empty'}${x.status !== 'ready' ? ` · <span class="pill ${x.status}">${x.status}</span>` : ''}</div></td>
+      <td style="text-align:right;white-space:nowrap"><b>${fmtBytes(x.total)}</b></td>
+      <td class="row" style="justify-content:flex-end;flex-wrap:nowrap">${x.parts.copies ? `<button data-copies title="Clear key/speed copies">Clear copies</button>` : ''}<button data-del class="danger" title="Delete song">✕</button></td></tr>`).join('')}
+    </table>${st.songs.length ? '' : '<p class="dim">No songs.</p>'}</div>
+    <h2>Recordings <span class="small dim">${st.takes.length} · ${fmtBytes(takeTotal)}</span></h2>
+    <div class="card">
+      ${st.takes.length ? `<div class="row small" style="flex-wrap:wrap">
+        <label class="row"><input type="checkbox" id="tkAll"> Select all</label>
+        <button data-older="30">Select older than 30 days</button>
+        <span class="grow"></span>
+        <label class="row"><input type="checkbox" id="tkKeep" checked> Keep the scores</label>
+        <button class="danger" id="tkDel" disabled>Delete selected</button>
+      </div>` : ''}
+      <div class="table-wrap"><table id="stTakes">
+      ${st.takes.map(t => `<tr data-id="${t.id}" data-created="${t.created}">
+        <td style="width:1%"><input type="checkbox" data-pick></td>
+        <td><div>${esc(t.title || t.ref)} <span class="dim small">${t.kind}</span></div><div class="small dim">${fmtDate(t.created)}${t.score == null ? '' : ` · ${Math.round(t.score)}%`}${t.missing ? ' · file missing' : ''}</div></td>
+        <td style="text-align:right;white-space:nowrap">${fmtBytes(t.size)}</td>
+        <td class="row" style="justify-content:flex-end;flex-wrap:nowrap">${t.missing ? '' : `<button data-play="${esc(t.take)}">▶</button>`}<button data-del class="danger" title="Delete recording">✕</button></td></tr>`).join('')}
+      </table></div>
+      ${st.takes.length ? '' : '<p class="dim">No recordings. Turn on “Record my takes” in Settings to keep them.</p>'}
+    </div>
+    <audio id="player" hidden></audio>`;
+  const done = (msg, r) => { toast(`${msg}${r && r.freed ? ` · freed ${fmtBytes(r.freed)}` : ''}`); render(); };
+  $('#clearCopies') && ($('#clearCopies').onclick = async () => {
+    try { done('Copies cleared', await api('/api/storage/clear-copies', { method: 'POST' })); } catch (e) { toast(e.message); }
+  });
+  $('#cleanLeft') && ($('#cleanLeft').onclick = async () => {
+    if (!confirm(`Delete ${st.orphans.length} leftover file${st.orphans.length === 1 ? '' : 's'} (${fmtBytes(a.leftovers)})?`)) return;
+    try { done('Leftovers deleted', await api('/api/storage/clean-leftovers', { method: 'POST' })); } catch (e) { toast(e.message); }
+  });
+  $('#stSongs').onclick = async e => {
+    const tr = e.target.closest('tr[data-id]'); if (!tr) return;
+    const x = st.songs.find(y => y.id === tr.dataset.id);
+    try {
+      if (e.target.closest('[data-copies]')) done('Copies cleared', await api(`/api/storage/songs/${x.id}/clear-copies`, { method: 'POST' }));
+      else if (e.target.closest('[data-del]')) {
+        if (!confirm(`Delete “${x.title}” and its audio (${fmtBytes(x.total)})? Your scores for it stay in Progress.`)) return;
+        done('Song deleted', await api(`/api/songs/${x.id}`, { method: 'DELETE' }));
+      }
+    } catch (err) { toast(err.message); }
+  };
+  const tk = $('#stTakes');
+  const syncSel = () => {
+    sel.clear(); tk.querySelectorAll('[data-pick]:checked').forEach(c => sel.add(Number(c.closest('tr').dataset.id)));
+    const b = $('#tkDel'); if (!b) return;
+    const bytes = st.takes.filter(t => sel.has(t.id)).reduce((s2, t) => s2 + t.size, 0);
+    b.disabled = !sel.size; b.textContent = sel.size ? `Delete ${sel.size} (${fmtBytes(bytes)})` : 'Delete selected';
+    $('#tkAll').checked = sel.size && sel.size === st.takes.length;
+  };
+  tk.onchange = syncSel;
+  $('#tkAll') && ($('#tkAll').onchange = e => { tk.querySelectorAll('[data-pick]').forEach(c => (c.checked = e.target.checked)); syncSel(); });
+  view.querySelector('[data-older]') && (view.querySelector('[data-older]').onclick = () => {
+    const cut = Date.now() / 1000 - 30 * 86400;
+    tk.querySelectorAll('tr[data-id]').forEach(tr => { tr.querySelector('[data-pick]').checked = Number(tr.dataset.created) < cut; });
+    syncSel(); if (!sel.size) toast('Nothing older than 30 days');
+  });
+  const delTakes = async ids => {
+    const keep = $('#tkKeep') ? $('#tkKeep').checked : true;
+    try { done(`${ids.length} recording${ids.length === 1 ? '' : 's'} deleted`, await api('/api/storage/takes/delete', { method: 'POST', json: { ids, keep_scores: keep } })); } catch (e) { toast(e.message); }
+  };
+  $('#tkDel') && ($('#tkDel').onclick = () => {
+    if (!sel.size) return;
+    const keep = $('#tkKeep').checked;
+    if (confirm(`Delete ${sel.size} recording${sel.size === 1 ? '' : 's'}?${keep ? ' Scores stay in Progress.' : ' Their scores go too.'}`)) delTakes([...sel]);
+  });
+  tk.onclick = e => {
+    const tr = e.target.closest('tr[data-id]'); if (!tr) return;
+    if (e.target.dataset.play) { const p = $('#player'); p.src = `/media/takes/${e.target.dataset.play}`; p.play(); }
+    else if (e.target.closest('[data-del]') && confirm('Delete this recording?')) delTakes([Number(tr.dataset.id)]);
+  };
+  cleanup = () => { const p = $('#player'); if (p) p.pause(); };
+}, 'settings');
+const GROUPS_ORDER = ['audio', 'source', 'copies', 'data'];
 
 api('/api/me').then(m => { if (m.login) $('#logout').hidden = false; }).catch(() => {});
 $('#logout').onclick = e => { if (!confirm('Sign out of Vocal Lab on this device?')) e.preventDefault(); };
