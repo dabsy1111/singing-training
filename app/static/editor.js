@@ -34,6 +34,7 @@
           <li><b>A missing note:</b> double-tap an empty spot to add one there. <b>An extra note:</b> tap it and press Delete.</li>
           <li><b>A whole stretch is wrong</b> (an octave out, or notes all over the place): drag along the time strip at the top to pick it, then use the range buttons.</li>
           <li><b>The guide vocal sings the harmony or a backing part</b>, or the real tune is in the backing vocals: pick the stretch along the top strip and choose what it really is. The bottom lane shows the lead singer in blue and the backing vocals in amber; where amber sits above blue, they’re probably swapped.</li>
+          <li><b>Select all</b> (or Ctrl+A) picks every note, or every note in the picked stretch, so you can move them all at once: up or down, an octave, earlier or later.</li>
           <li>Drag the background to look around, pinch or use − + to zoom. Tap the top strip to move the playhead. Changes save as you go; Undo works until you leave the page.</li>
         </ul>
       </details>
@@ -45,6 +46,7 @@
         <label><input type="checkbox" id="mBand"> Music</label>
         <label><input type="checkbox" id="mTone" checked> Note tones</label>
         <span class="grow"></span>
+        <button id="edAll" title="Select every note (Ctrl+A)">Select all</button>
         <button id="edUndo" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
         <button id="edRedo" title="Redo (Ctrl+Shift+Z)" disabled>↷</button>
       </div>
@@ -112,7 +114,7 @@
       undo.push(before); if (undo.length > 200) undo.shift();
       redo.length = 0; undoButtons(); scheduleSave(); renderPanel();
     }
-    function undoButtons() { $('#edUndo').disabled = !undo.length || busy; $('#edRedo').disabled = !redo.length || busy; }
+    function undoButtons() { $('#edUndo').disabled = !undo.length || busy; $('#edRedo').disabled = !redo.length || busy; $('#edAll').disabled = busy; }
     function restore(json) { notes = JSON.parse(json); sel = new Set(); scheduleSave(); renderPanel(); undoButtons(); }
     function doUndo() { if (!undo.length || busy) return; redo.push(snapshot()); restore(undo.pop()); }
     function doRedo() { if (!redo.length || busy) return; undo.push(snapshot()); restore(redo.pop()); }
@@ -505,12 +507,16 @@
       if (b.dataset.zp) { const mid = v.lo + v.rows / 2; v.rows = clamp(v.rows + (b.dataset.zp === '1' ? -3 : 3), 6, 60); v.lo = mid - v.rows / 2; }
     };
     $('#edUndo').onclick = doUndo; $('#edRedo').onclick = doRedo;
+    // Select every note, or every note in the picked range if there is one.
+    function selectAll() { if (busy) return; sel = new Set(range ? notes.filter(inRange) : notes); renderPanel(); }
+    $('#edAll').onclick = selectAll;
 
     function onKey(e) {
       if (e.target.closest('input, textarea, select') || busy) return;
       const k = e.key, mod = e.ctrlKey || e.metaKey, list = selected();
       if (mod && k.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? doRedo() : doUndo(); return; }
       if (mod && k.toLowerCase() === 'y') { e.preventDefault(); doRedo(); return; }
+      if (mod && k.toLowerCase() === 'a') { e.preventDefault(); selectAll(); return; }
       if (k === ' ') { e.preventDefault(); $('#edPlay').click(); return; }
       if (k === 'Escape') { sel = new Set(); range = null; renderPanel(); return; }
       if (!list.length) return;
@@ -529,7 +535,7 @@
         const one = list.length === 1 ? list[0] : null;
         const names = [...new Set(list.map(n => noteName(n.midi)))];
         html += `<div class="card ed-card"><div class="row"><b class="grow">${one ? `${noteName(one.midi)} · ${fmtT(one.t0)}–${fmtT(one.t1)}` : `${list.length} notes (${names.slice(0, 4).join(', ')}${names.length > 4 ? '…' : ''})`}</b>
-          <button data-a="hearSel">▶ Hear</button></div>
+          <button data-a="hearSel">▶ Hear</button><button data-a="selNone" title="Deselect (Esc)">✕</button></div>
           <div class="ed-btns">
             <span class="ed-grp"><span class="dim small">Pitch</span><button data-a="up">▲</button><button data-a="down">▼</button><button data-a="octUp" title="An octave up">8va ▲</button><button data-a="octDown" title="An octave down">8va ▼</button><button data-a="fit" title="Move to what the singer sang (the grey line)">Fit to line</button></span>
             <span class="ed-grp"><span class="dim small">Time</span><button data-a="left" title="Earlier">◀</button><button data-a="right" title="Later">▶</button>
@@ -563,6 +569,7 @@
       const move = (ns, d) => edit(() => { const k = Math.max(d, -Math.min(...ns.map(n => n.t0))); ns.forEach(n => { n.t0 += k; n.t1 += k; }); });
       if (b.dataset.fix) return askFix(b.dataset.fix);
       switch (a) {
+        case 'selNone': sel = new Set(); renderPanel(); break;
         case 'hearSel': if (list.length) hear(Math.min(...list.map(n => n.t0)) - 0.4, Math.max(...list.map(n => n.t1)) + 0.4); break;
         case 'up': shift(list, 1); break;
         case 'down': shift(list, -1); break;
