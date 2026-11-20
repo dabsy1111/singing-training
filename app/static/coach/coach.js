@@ -223,6 +223,12 @@ function addMsg(role, text) {
 
 function showReply(el, r) {
   el.className = 'msg assistant'; el.textContent = r.reply;
+  if (r.suggestion?.lessonId) {
+    const a = document.createElement('a');
+    a.className = 'btn msg-link'; a.href = `/#/lesson/${encodeURIComponent(r.suggestion.lessonId)}`;
+    a.textContent = `Open lesson ${r.suggestion.lessonId} ${r.suggestion.title} ▸`;
+    el.after(a);
+  }
   for (const n of r.notesAdded || []) addMsg('note', `📝 Coach remembered: ${n.note}`);
 }
 

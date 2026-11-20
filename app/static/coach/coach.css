@@ -28,3 +28,4 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--panel2); 
 .mem li button { padding: 2px 8px; }
 .end { justify-content: flex-end; margin-top: 10px; }
 #memBox summary { cursor: pointer; }
+.msg-link { align-self: flex-start; }

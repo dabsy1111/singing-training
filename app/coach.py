@@ -97,21 +97,27 @@ CREATE INDEX IF NOT EXISTS coach_messages_user ON coach_messages(user_id, create
 """
 
 SYSTEM_PROMPT = """You are the vocal coach inside Vocal Lab, a singing practice app. You coach one student by text.
+Assume they are a beginner unless memory says otherwise. Singing out loud while an app listens takes
+nerve, so be the patient, encouraging teacher a beginner would want to come back to.
 
 You never hear the student. The app measures their pitch on their own device and sends you numbers:
-the target notes, how far off they sang in cents (100 cents = 1 semitone; + is sharp, - is flat),
-the share of sung time within 50 cents of the target, steadiness (spread in cents), drift during a
-hold, and how long it took to settle on the note. Treat these as approximate: phone mics, rooms and
-headphones all add error. Never invent numbers or claim to have heard anything.
+the target notes, how far off they sang in cents (100 cents = 1 semitone; + is sharp/high, - is
+flat/low), how much of each note was in tune, steadiness, drift during a hold, and how long it took to
+settle on the note. Treat these as approximate: phone mics, rooms and headphones all add error. Never
+invent numbers or claim to have heard anything.
 
 How to reply:
-- Short: two to four sentences. No headings, no lists.
-- Lead with the single most useful observation, naming the note and the number ("G4 sat 40 cents flat").
-- Give one concrete thing to try next, described physically (breath, jaw, tongue, vowel, larynx, volume),
-  and say which exercise to repeat.
-- Notice patterns across sessions using the memory below: getting better, same miss again, flat only up high.
-- If there is no practice data, say so and suggest a session of "Match the note".
-- Encourage honestly. Don't praise a poor result.
+- Warm, friendly and short: two to four sentences of plain words. No headings or lists.
+- Start with something real that went well: a note that landed, steadier than last time, finishing a
+  hard exercise, or simply showing up to practise again.
+- Then the one thing most worth working on, named kindly and in plain words first ("G4 came out a
+  little low"). If you give cents, say what that means ("about a quarter of a note low").
+- Give one simple, physical thing to try, described so a beginner can do it (breath, jaw, tongue,
+  vowel, volume, imagining the note first).
+- Misses are normal at this stage: never scold, and never call a result bad, poor or a failure. Be
+  honest about what to work on (don't pretend a miss was a hit), but frame it as the next step.
+- Notice progress across sessions using the memory below, and say so when it's there.
+- If there is no practice data, say so warmly and suggest a first lesson or a "Match the note" drill.
 - Pain, hoarseness that lasts, or losing the voice: tell them to rest and see a voice professional. Don't diagnose.
 
 Memory: call save_note when you learn something worth keeping for future sessions: a recurring
@@ -128,6 +134,21 @@ TOOLS = [{
             "type": "object",
             "properties": {"note": {"type": "string", "description": "One fact, under 25 words."}},
             "required": ["note"],
+            "additionalProperties": False,
+        },
+    },
+}, {
+    "type": "function",
+    "function": {
+        "name": "suggest_lesson",
+        "description": "Point the student to the one course lesson to do next. The app shows it as a button.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "lessonId": {"type": "string", "description": "An open lesson id from the course list, e.g. \"2.3\"."},
+                "reason": {"type": "string", "description": "Why, in under 20 friendly words, addressed to the student."},
+            },
+            "required": ["lessonId", "reason"],
             "additionalProperties": False,
         },
     },
@@ -249,6 +270,97 @@ def _ago(ts):
     return "yesterday" if days == 1 else f"{days} days ago"
 
 
+# --------------------------------------------------------------------------
+# the course (read from the front end's lessons.js so there's one source of truth)
+# --------------------------------------------------------------------------
+
+LESSONS_JS = Path(__file__).parent / "static" / "lessons.js"
+EASE_NAMES = ["Standard", "Easier", "Easiest"]
+_S = r"'((?:[^'\\]|\\.)*)'"
+_catalogue = None
+
+
+def _unq(t):
+    return re.sub(r"\\(.)", r"\1", t)
+
+
+def course_catalogue():
+    """[{id, title, unit, unitTitle, type, why}] in course order, or [] if lessons.js can't be read."""
+    global _catalogue
+    if _catalogue is not None:
+        return _catalogue
+    try:
+        text = LESSONS_JS.read_text()
+        units = [(m.start(), int(m.group(1)), _unq(m.group(2)))
+                 for m in re.finditer(r"^\s{4}id: (\d+), title: " + _S, text, re.M)]
+        found = list(re.finditer(r"\{ id: '(\d+\.\d+)', title: " + _S + r", type: '(\w+)'", text))
+        out = []
+        for i, m in enumerate(found):
+            end = found[i + 1].start() if i + 1 < len(found) else len(text)
+            why = re.search(r"why: " + _S, text[m.end():end])
+            unit = [u for u in units if u[0] < m.start()][-1]
+            out.append({"id": m.group(1), "title": _unq(m.group(2)), "type": m.group(3),
+                        "unit": unit[1], "unitTitle": unit[2], "why": _unq(why.group(1)) if why else ""})
+        _catalogue = out
+    except (OSError, IndexError) as e:
+        log.warning("couldn't read the course from lessons.js: %s", e)
+        _catalogue = []
+    return _catalogue
+
+
+def course_state():
+    """Each lesson with its status, using the same unlock rules as course.js isUnlocked()."""
+    cat = course_catalogue()
+    prog = db.get_kv("course", {}) or {}
+    passed, placed = prog.get("passed") or {}, prog.get("placedUnit") or 0
+    first_in_unit = {}
+    for l in cat:
+        first_in_unit.setdefault(l["unit"], l["id"])
+    out, nxt = [], None
+    for i, l in enumerate(cat):
+        p = passed.get(l["id"])
+        open_ = (i == 0 or bool(p) or l["unit"] < placed
+                 or (l["unit"] == placed and first_in_unit[l["unit"]] == l["id"])
+                 or bool(passed.get(cat[i - 1]["id"])))
+        status = ("skipped" if p.get("skipped") else "passed") if p else ("open" if open_ else "locked")
+        if status == "open" and nxt is None and not l["unit"] < placed:
+            nxt = l["id"]
+        out.append({**l, "status": status, "score": (p or {}).get("score")})
+    return out, nxt, EASE_NAMES[prog.get("ease") or 0] if (prog.get("ease") or 0) < 3 else "Standard"
+
+
+def course_block():
+    lessons, nxt, ease = course_state()
+    if not lessons:
+        return ""
+    lines = ["## The course (the app's lessons)",
+             "Units: " + "; ".join(dict.fromkeys(f"{l['unit']} {l['unitTitle']}" for l in lessons)) + ".",
+             f"Difficulty setting: {ease}.",
+             "Lessons the student can open (id, title, status, what it trains):"]
+    for l in lessons:
+        if l["status"] == "locked":
+            continue
+        score = f" {l['score']}%" if l["score"] is not None else ""
+        st = {"passed": "passed" + score,
+              "skipped": "skipped for now", "open": "next new lesson" if l["id"] == nxt else "open"}[l["status"]]
+        why = l["why"] if len(l["why"]) <= 110 else l["why"][:110].rsplit(" ", 1)[0] + " …"
+        lines.append(f"- {l['id']} {l['title']} [{st}]: {why}")
+    lines.append("Every other lesson is locked until the ones before it are passed: never suggest those.")
+    lines.append("")
+    lines.append("Guiding their lessons: when practice results come in, or they ask what to do, call "
+                 "suggest_lesson once with the single lesson that will help most next. If they just "
+                 "missed a lesson but came close, suggest the same one again. If the same skill keeps "
+                 "slipping (sliding into notes, drifting flat on long notes, wobbling, the break), "
+                 "suggest an open earlier lesson that trains it. If they passed or are doing well, "
+                 "suggest the next new lesson. Name it in your reply by number and title with a kind "
+                 "reason. Don't call it for small talk.")
+    return "\n".join(lines)
+
+
+def open_lesson_ids():
+    return {l["id"] for l in course_state()[0] if l["status"] != "locked"}
+
+
 def _short(text, limit=600):
     """A previous session on one line, without the long Details part if it doesn't fit."""
     t = " | ".join(l for l in text.splitlines() if l and l != "PRACTICE SESSION")
@@ -264,6 +376,9 @@ def memory_block(uid, skip_session=None):
     lines += [f"- {n['note']}" for n in notes] or ["- Nothing yet."]
     lines += ["", "## Their previous practice sessions (newest first)"]
     lines += [f"- {_ago(s['created'])}: {_short(s['text'])}" for s in sessions] or ["- None yet."]
+    course = course_block()
+    if course:
+        lines += ["", course]
     return "\n".join(lines)
 
 
@@ -294,12 +409,43 @@ def _save_note_call(uid, args):
     return {"ok": True, "id": nid}, {"id": nid, "note": note}
 
 
+def _suggest_call(args, out):
+    """suggest_lesson: only open lessons; saved so the Lessons page can show it later."""
+    try:
+        if isinstance(args, str):
+            args = json.loads(args or "{}")
+        lid = str(args.get("lessonId", "")).strip()
+        reason = " ".join(str(args.get("reason", "")).split())[:200]
+    except (ValueError, AttributeError, TypeError):
+        return {"ok": False, "reason": "bad arguments"}
+    if out.get("suggestion"):
+        return {"ok": False, "reason": "already suggested one lesson this reply"}
+    lesson = next((l for l in course_catalogue() if l["id"] == lid), None)
+    if not lesson or lid not in open_lesson_ids():
+        return {"ok": False, "reason": f"{lid or 'that'} isn't open to the student; pick one from the course list"}
+    sug = {"lessonId": lid, "title": lesson["title"], "reason": reason, "at": time.time()}
+    db.put_kv("coach_suggestion", sug)
+    out["suggestion"] = sug
+    return {"ok": True}
+
+
+def _tool(uid, name, args, out):
+    if name == "save_note":
+        result, note = _save_note_call(uid, args)
+        if note:
+            out["notes"].append(note)
+        return result
+    if name == "suggest_lesson":
+        return _suggest_call(args, out)
+    return {"ok": False, "reason": "unknown tool"}
+
+
 def run_coach(uid, messages, session_id=None):
-    """Call the model, carry out any save_note calls, and return (reply, notes added).
+    """Call the model, carry out its tool calls, and return (reply, {"notes": [...], "suggestion": ...}).
     messages is OpenAI-shaped (system first); the Anthropic path converts it."""
     if PROVIDER == "anthropic":
         return _run_anthropic(uid, messages)
-    saved = []
+    saved = {"notes": [], "suggestion": None}
     for _ in range(3):   # at most two rounds of tool calls, then a final answer
         try:
             resp = client().chat.completions.create(
@@ -317,11 +463,7 @@ def run_coach(uid, messages, session_id=None):
         messages.append({"role": "assistant", "content": msg.content,
                          "tool_calls": [tc.model_dump() for tc in msg.tool_calls]})
         for tc in msg.tool_calls:
-            result = {"ok": False}
-            if tc.function.name == "save_note":
-                result, note = _save_note_call(uid, tc.function.arguments)
-                if note:
-                    saved.append(note)
+            result = _tool(uid, tc.function.name, tc.function.arguments, saved)
             messages.append({"role": "tool", "tool_call_id": tc.id, "content": json.dumps(result)})
     return "(The coach didn't answer. Try again.)", saved
 
@@ -338,7 +480,7 @@ def _run_anthropic(uid, messages):
             convo[-1]["content"] += "\n\n" + m["content"]
         else:
             convo.append({"role": m["role"], "content": m["content"]})
-    saved, texts = [], []
+    saved, texts = {"notes": [], "suggestion": None}, []
     extra = {"thinking": {"type": "disabled"}} if THINKING == "off" else {}
     for _ in range(3):
         try:
@@ -370,11 +512,7 @@ def _run_anthropic(uid, messages):
         convo.append({"role": "assistant", "content": [b.model_dump(exclude_none=True) for b in resp.content]})
         results = []
         for b in uses:
-            result = {"ok": False, "reason": "unknown tool"}
-            if b.name == "save_note":
-                result, note = _save_note_call(uid, b.input)
-                if note:
-                    saved.append(note)
+            result = _tool(uid, b.name, b.input, saved)
             results.append({"type": "tool_result", "tool_use_id": b.id, "content": json.dumps(result)})
         convo.append({"role": "user", "content": results})
     return "\n\n".join(texts) or "(The coach didn't answer. Try again.)", saved
@@ -498,7 +636,7 @@ def session(s: SessionIn):
     reply, saved = run_coach(uid, messages, sid)
     add_message(uid, "user", text + (f"\n\n{question}" if question else ""), sid)
     add_message(uid, "assistant", reply, sid)
-    return {"reply": reply, "sessionId": sid, "notesAdded": saved, "sent": text}
+    return {"reply": reply, "sessionId": sid, "notesAdded": saved["notes"], "suggestion": saved["suggestion"], "sent": text}
 
 
 # --------------------------------------------------------------------------
@@ -563,7 +701,7 @@ def chat(c: ChatIn):
     reply, saved = run_coach(uid, messages)
     add_message(uid, "user", c.message.strip())
     add_message(uid, "assistant", reply)
-    return {"reply": reply, "notesAdded": saved}
+    return {"reply": reply, "notesAdded": saved["notes"], "suggestion": saved["suggestion"]}
 
 
 @router.get("/api/coach/messages")
@@ -588,6 +726,18 @@ def sessions(userId: str | None = None, limit: int = 10):
 @router.delete("/api/coach/sessions/{sid}")
 def delete_session(sid: int, userId: str | None = None):
     db.execute("DELETE FROM coach_sessions WHERE id=? AND user_id=?", (sid, user_id(userId)))
+    return {"ok": True}
+
+
+@router.get("/api/coach/suggestion")
+def get_suggestion():
+    """The coach's latest lesson pick, for the Lessons page (null if none)."""
+    return db.get_kv("coach_suggestion", None)
+
+
+@router.delete("/api/coach/suggestion")
+def clear_suggestion():
+    db.put_kv("coach_suggestion", None)
     return {"ok": True}
 
 

@@ -812,6 +812,18 @@ function coachRunFields(res, P) {
   };
 }
 
+/* The coach's lesson pick as a small block: a button to the lesson, or a note to try this one again. */
+function coachSuggestion(sug, currentLessonId) {
+  if (!sug?.lessonId) return null;
+  const d = document.createElement('div');
+  d.className = 'coach-next';
+  const same = sug.lessonId === currentLessonId;
+  d.innerHTML = same
+    ? `<span class="pill">Coach suggests</span> <span class="small">Give this lesson another go${sug.reason ? `: ${esc(sug.reason)}` : '.'}</span>`
+    : `<a class="btn primary" href="#/lesson/${esc(sug.lessonId)}">Next: ${esc(sug.lessonId)} ${esc(sug.title)} ▸</a>${sug.reason ? `<span class="dim small">${esc(sug.reason)}</span>` : ''}`;
+  return d;
+}
+
 /* Adds a coach panel to host and asks /api/session. body = the /api/session fields.
  * Doesn't scroll or take focus. A follow-up question goes to /api/coach/chat, which carries
  * the same conversation the /coach page shows. */
@@ -826,6 +838,8 @@ async function coachPanel(host, body) {
     const r = await api('/api/session', { method: 'POST', json: body });
     if (!box.isConnected) return;
     reply.textContent = r.reply; reply.classList.remove('dim');
+    const sugEl = coachSuggestion(r.suggestion, body.lessonId);
+    if (sugEl) box.appendChild(sugEl);
     if (r.notesAdded?.length) {
       const n = document.createElement('p'); n.className = 'small dim';
       n.textContent = r.notesAdded.map(x => `📝 Remembered: ${x.note}`).join(' · ');
@@ -842,7 +856,12 @@ async function coachPanel(host, body) {
       const a = document.createElement('p'); a.className = 'coach-reply dim'; a.textContent = 'Coach is thinking…';
       const qp = document.createElement('p'); qp.className = 'coach-q small'; qp.textContent = q;
       box.insertBefore(qp, f); box.insertBefore(a, f);
-      try { const r2 = await api('/api/coach/chat', { method: 'POST', json: { message: q } }); a.textContent = r2.reply; a.classList.remove('dim'); }
+      try {
+        const r2 = await api('/api/coach/chat', { method: 'POST', json: { message: q } });
+        a.textContent = r2.reply; a.classList.remove('dim');
+        const s2 = coachSuggestion(r2.suggestion, body.lessonId);
+        if (s2) box.insertBefore(s2, f);
+      }
       catch { qp.remove(); a.remove(); }
       f.querySelector('button').disabled = false;
     };

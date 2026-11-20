@@ -355,6 +355,7 @@ route(/^\/lessons$/, async () => {
         <div class="meter" style="margin:8px 0 0"><i style="left:0;width:${Math.max(2, 100 * done / ALL_LESSONS.length)}%;height:10px;top:0;border-radius:99px;background:var(--accent)"></i></div></div>
       ${nxt ? `<a class="btn primary" href="#/lesson/${nxt.id}">${done ? 'Continue' : 'Start'}: ${esc(nxt.id)} ${esc(nxt.title)}</a>` : '<span class="pill ready">Course complete</span>'}
     </div>
+    <div id="coachNext"></div>
     <div id="nudges"></div>
     <div class="card">
       <div class="row"><b class="grow">Difficulty</b>
@@ -377,11 +378,42 @@ route(/^\/lessons$/, async () => {
           <span class="dim small">${p?.skipped ? 'skipped' : p ? (C.best[l.id] != null ? C.best[l.id] + '%' : 'done') + (p.ease ? ` · ${EASE[p.ease].name.toLowerCase()}` : '') : C.best[l.id] != null ? 'best ' + C.best[l.id] + '%' : ''}</span></${open ? 'a' : 'div'}>`;
       }).join('')}</div>`).join('')}`;
   restNudges($('#nudges'));
+  coachNextCard($('#coachNext'));
   $('#ease').onclick = e => {
     const b = e.target.closest('[data-ease]'); if (!b) return;
     C.ease = +b.dataset.ease; saveCourse(); render();
   };
 }, 'lessons');
+
+/* Lessons page: the coach's latest lesson pick, or a button to ask for one. Hidden if the coach
+ * isn't set up, the pick is over a week old, or that lesson has been passed since. */
+async function coachNextCard(box) {
+  if (!box || !(await coachReady())) return;
+  let sug = null;
+  try { sug = await api('/api/coach/suggestion'); } catch { return; }
+  const p = sug && C.passed[sug.lessonId];
+  const stale = !sug || Date.now() / 1000 - sug.at > 7 * 86400 || (p && p.at && p.at > sug.at * 1000)
+    || !lessonById(sug.lessonId) || !isUnlocked(lessonById(sug.lessonId));
+  const draw = (s, text) => {
+    box.innerHTML = `<div class="card coach-card">
+      <div class="row"><span class="coach-who grow">Coach suggests</span>${s ? '<button class="small" id="coachDismiss" aria-label="Dismiss">✕</button>' : ''}</div>
+      ${text ? `<p class="coach-reply">${esc(text)}</p>` : ''}
+      ${s ? `<div class="row"><a class="btn primary" href="#/lesson/${esc(s.lessonId)}">${esc(s.lessonId)} ${esc(s.title)} ▸</a>
+        ${s.reason && s.reason !== text ? `<span class="dim small grow">${esc(s.reason)}</span>` : ''}</div>`
+        : '<button id="coachAsk">Ask the coach what to work on</button>'}</div>`;
+    const x = $('#coachDismiss');
+    if (x) x.onclick = async () => { try { await api('/api/coach/suggestion', { method: 'DELETE' }); } catch {} draw(null, ''); };
+    const ask = $('#coachAsk');
+    if (ask) ask.onclick = async () => {
+      ask.disabled = true; ask.textContent = 'Coach is thinking…';
+      try {
+        const r = await api('/api/coach/chat', { method: 'POST', json: { message: 'Looking at my lessons and how my practice has gone, which lesson should I do next?' } });
+        draw(r.suggestion, r.reply);
+      } catch { box.innerHTML = ''; }
+    };
+  };
+  draw(stale ? null : sug, '');
+}
 
 async function restNudges(box) {
   const out = [];

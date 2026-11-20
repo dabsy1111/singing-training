@@ -203,3 +203,7 @@ canvas.vrp { width: 100%; height: 240px; display: block; background: rgba(0,0,0,
 .st-bar { display: flex; height: 12px; background: var(--panel2); border-radius: 99px; overflow: hidden; margin: 10px 0; }
 .st-bar i { display: block; height: 100%; }
 .st-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: 0; }
+.coach-inline .coach-next, .coach-card .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 6px 0; }
+.coach-card { border-left: 3px solid var(--accent); }
+.coach-card .coach-who { font-size: 12px; color: var(--dim); text-transform: uppercase; letter-spacing: .5px; }
+.coach-card .coach-reply { margin: 6px 0; white-space: pre-wrap; }
