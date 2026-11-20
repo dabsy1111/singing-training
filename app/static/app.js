@@ -92,8 +92,16 @@ function smoothPitch(prev, hz) {
   return 0.35 * hz + 0.65 * prev;
 }
 
+// Is the open mic still feeding us? iOS can end the track (AirPods reconnect, a call, Siri)
+// or leave the detector on a context that's since been replaced; either way no frames arrive.
+function micAlive() {
+  const tr = A.stream?.getAudioTracks()[0];
+  return !!(tr && tr.readyState === 'live' && A.node && A.ctx && A.node.context === A.ctx && A.ctx.state !== 'closed');
+}
+
 async function startMic() {
-  if (A.stream) return audioCtx();
+  if (A.stream && micAlive()) return audioCtx();
+  if (A.stream) teardownMic();   // a dead mic: reopen it instead of carrying on deaf
   if (!navigator.mediaDevices?.getUserMedia) throw new Error('Microphone needs HTTPS. Open the https:// address (see the README).');
   setAudioSession('play-and-record');
   // On iPhone, opening the mic switches AirPods into headset mode, which changes the
@@ -105,39 +113,100 @@ async function startMic() {
   A.stream = await navigator.mediaDevices.getUserMedia({
     audio: { echoCancellation: !!s.echoCancellation, noiseSuppression: false, autoGainControl: false },
   });
+  A.stream.getAudioTracks()[0]?.addEventListener('ended', () => micChanged());
   const ctx = await audioCtx();
   const src = ctx.createMediaStreamSource(A.stream);
   A.node = new AudioWorkletNode(ctx, 'pitch-processor');
   const sink = ctx.createGain(); sink.gain.value = 0;
   src.connect(A.node); A.node.connect(sink); sink.connect(ctx.destination);
   A.gate = createJumpGate(); A.smooth = null; A.filter = null;
+  A.lastFrameAt = performance.now(); A.level = 0;
   A.node.port.onmessage = e => {
+    A.lastFrameAt = performance.now(); A.level = e.data.rms || 0;
     A.raw.forEach(fn => fn(e.data));   // unfiltered frames (the voice range profile does its own checks)
     // the mic filter (mic-filter.js) drops breaths, clicks and bumps; rebuilt if its settings change
     const st = SETTINGS || {};
-    const key = `${st.micFilter ?? 2}/${st.rangeLow}/${st.rangeHigh}`;
-    if (!A.filter || A.filterKey !== key) { A.filter = createMicFilter(st.micFilter ?? 2, st.rangeLow, st.rangeHigh); A.filterKey = key; }
+    const level = st.micFilter ?? 2;
+    const key = `${level}/${st.rangeLow}/${st.rangeHigh}`;
+    if (!A.filter || A.filterKey !== key) { A.filter = createMicFilter(level, st.rangeLow, st.rangeHigh); A.filterKey = key; }
     for (const f of A.filter.push(e.data)) {
       let hz = null;
       if (f.hz > 0) {
-        const g = A.gate.push(f.hz, f.t);
+        // The jump gate holds a new pitch back 80 ms, drawing the old note meanwhile, which cut the
+        // start off every note sung straight on from the last. The filter already confirms jumps
+        // and drops short glitches, so the gate only runs with the filter off.
+        const g = level === 0 ? A.gate.push(f.hz, f.t) : f.hz;
         if (g !== null) { A.smooth = smoothPitch(A.smooth, g); hz = A.smooth; } else hz = A.smooth;
       } else { A.gate.reset(); A.smooth = null; }
       const frame = { t: f.t, hz, midi: hz ? hzToMidi(hz) : null, rms: f.rms };
       A.listeners.forEach(fn => fn(frame));
     }
   };
+  micChanged();
   return ctx;
 }
 
-function stopMic() {
+// Close the mic but keep whoever's listening, so a restart carries straight on.
+function teardownMic() {
   A.stream?.getTracks().forEach(t => t.stop());
   // Detach the old detector too: a disconnected worklet keeps running and posting silent frames,
   // which interleaved with the next page's frames and broke runs of steady pitch.
   if (A.node) { A.node.port.onmessage = null; A.node.port.close(); A.node.disconnect(); }
-  A.stream = null; A.node = null; A.listeners.clear(); A.raw.clear();
+  A.stream = null; A.node = null; A.filter = null;
+  micChanged();
+}
+
+function stopMic() {
+  teardownMic();
+  A.listeners.clear(); A.raw.clear();
   setAudioSession('auto');
 }
+
+async function restartMic() { teardownMic(); return startMic(); }
+
+// ---------------------------------------------------------------- mic button (header, every page)
+// Off: tap to open the mic before you press play. On: a live level bar shows it hearing you; tap
+// to close it. If it stops sending (dropped AirPods, an interruption) it turns red: tap to reopen,
+// no page reload needed.
+function micState() {
+  if (!A.stream) return 'off';
+  if (!micAlive() || performance.now() - (A.lastFrameAt || 0) > 1500) return 'stuck';
+  return 'on';
+}
+function micChanged() { drawMicBtn(); }
+function drawMicBtn() {
+  const b = document.getElementById('micBtn'); if (!b) return;
+  const st = micState();
+  if (b.dataset.state !== st) {
+    b.dataset.state = st;
+    b.title = st === 'off' ? 'Start the microphone' : st === 'on' ? 'Mic on: tap to stop' : 'Mic stopped hearing you: tap to restart';
+    b.querySelector('span').textContent = st === 'off' ? 'Start mic' : st === 'on' ? 'Mic on' : 'Restart mic';
+  }
+}
+(function micBtnLoop() {
+  const b = document.getElementById('micBtn');
+  if (b) {
+    drawMicBtn();
+    const bar = b.querySelector('i');
+    // level as a share of a loud-ish voice (-20 dB full scale), on a dB scale so quiet singing still shows
+    const db = A.level > 1e-4 ? 20 * Math.log10(A.level) : -80;
+    bar.style.width = (b.dataset.state === 'on' ? clamp((db + 60) / 40, 0, 1) * 100 : 0) + '%';
+  }
+  requestAnimationFrame(micBtnLoop);
+})();
+document.addEventListener('click', async e => {
+  const b = e.target.closest?.('#micBtn'); if (!b) return;
+  e.preventDefault();
+  const st = micState();
+  try {
+    if (st === 'on') { teardownMic(); setAudioSession('auto'); return; }
+    b.disabled = true;
+    await (st === 'stuck' ? restartMic() : startMic());
+    toast(st === 'stuck' ? 'Mic restarted' : 'Mic on. Sing a note: the bar should move.');
+  } catch (err) {
+    toast(err.name === 'NotAllowedError' ? 'Microphone permission was refused. Allow it in Safari\'s settings for this site.' : 'Mic error: ' + err.message, 6000);
+  } finally { b.disabled = false; drawMicBtn(); }
+});
 
 function onPitch(fn) { A.listeners.add(fn); return () => A.listeners.delete(fn); }
 function onRawPitch(fn) { A.raw.add(fn); return () => A.raw.delete(fn); }

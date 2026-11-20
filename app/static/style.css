@@ -12,6 +12,14 @@ a { color: var(--accent); text-decoration: none; }
 .top { display: flex; align-items: center; gap: 16px; padding: 10px 16px; background: var(--panel);
   border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 5; flex-wrap: wrap; }
 .brand { font-weight: 700; color: var(--text); letter-spacing: .3px; }
+/* header mic button: grey = off, green bar = hearing you, red = stopped, tap to restart */
+.micbtn { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 99px; font-size: 13px;
+  border: 1px solid var(--line); background: var(--panel2); color: var(--dim); cursor: pointer; }
+.micbtn b { display: none; width: 34px; height: 6px; border-radius: 3px; background: rgba(255,255,255,.1); overflow: hidden; }
+.micbtn b i { display: block; height: 100%; width: 0; background: var(--green, #4c8); }
+.micbtn[data-state=on] { color: var(--text); border-color: var(--green, #4c8); }
+.micbtn[data-state=on] b { display: inline-block; }
+.micbtn[data-state=stuck] { color: #fff; background: #a33; border-color: #c44; }
 nav { display: flex; gap: 4px; flex-wrap: wrap; }
 nav a { color: var(--dim); padding: 6px 10px; border-radius: 8px; }
 nav a.on { color: var(--text); background: var(--panel2); }
