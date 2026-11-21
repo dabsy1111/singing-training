@@ -56,6 +56,17 @@ function deviceLatencyMs() {
 }
 function setDeviceLatencyMs(ms) { try { localStorage.setItem(LAT_KEY, String(Math.round(ms))); } catch { /* storage blocked */ } }
 
+// Which mic to use is per browser too: a desktop can have a webcam mic, a USB mic and an audio
+// interface, and the system default is often the wrong one. Empty = the system default.
+const MIC_KEY = 'vl-mic-id';
+function preferredMicId() { try { return localStorage.getItem(MIC_KEY) || ''; } catch { return ''; } }
+function setPreferredMicId(id) { try { if (id) localStorage.setItem(MIC_KEY, id); else localStorage.removeItem(MIC_KEY); } catch { /* storage blocked */ } }
+async function listMics() {
+  try { return (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'audioinput' && d.deviceId !== 'default' && d.deviceId !== 'communications'); }
+  catch { return []; }
+}
+function currentMicLabel() { return A.stream?.getAudioTracks()[0]?.label || ''; }
+
 // Must be called from a tap/click the first time (browsers block audio until then).
 // resume() is called before any await so it still counts as part of the gesture.
 async function audioCtx() {
@@ -110,10 +121,16 @@ async function startMic() {
   // iOS lets the page start audio without another tap.)
   if (IS_IOS && A.ctx && A.ctx.state !== 'closed') { try { await A.ctx.close(); } catch { /* ignore */ } A.ctx = null; }
   const s = SETTINGS || await settings();
-  A.stream = await navigator.mediaDevices.getUserMedia({
-    audio: { echoCancellation: !!s.echoCancellation, noiseSuppression: false, autoGainControl: false },
-  });
+  const audio = { echoCancellation: !!s.echoCancellation, noiseSuppression: false, autoGainControl: false };
+  // Desktop: ask for both channels, so a mic on input 2 of an audio interface isn't lost (the
+  // detector listens to whichever channel has the voice). iPhone: leave it alone; AirPods and
+  // the built-in mic are mono, and extra constraints there have changed the route before.
+  if (!IS_IOS) audio.channelCount = { ideal: 2 };
+  const want = preferredMicId();
+  if (want) audio.deviceId = { ideal: want };   // ideal, not exact: falls back if it's unplugged
+  A.stream = await navigator.mediaDevices.getUserMedia({ audio });
   A.stream.getAudioTracks()[0]?.addEventListener('ended', () => micChanged());
+  A.clipAt = 0;
   const ctx = await audioCtx();
   const src = ctx.createMediaStreamSource(A.stream);
   A.node = new AudioWorkletNode(ctx, 'pitch-processor');
@@ -123,6 +140,7 @@ async function startMic() {
   A.lastFrameAt = performance.now(); A.level = 0;
   A.node.port.onmessage = e => {
     A.lastFrameAt = performance.now(); A.level = e.data.rms || 0;
+    if (e.data.peak >= 0.98) A.clipAt = A.lastFrameAt;   // the mic or interface gain is too high
     A.raw.forEach(fn => fn(e.data));   // unfiltered frames (the voice range profile does its own checks)
     // the mic filter (mic-filter.js) drops breaths, clicks and bumps; rebuilt if its settings change
     const st = SETTINGS || {};
@@ -171,6 +189,7 @@ async function restartMic() { teardownMic(); return startMic(); }
 function micState() {
   if (!A.stream) return 'off';
   if (!micAlive() || performance.now() - (A.lastFrameAt || 0) > 1500) return 'stuck';
+  if (performance.now() - (A.clipAt || 0) < 1500) return 'clip';
   return 'on';
 }
 function micChanged() { drawMicBtn(); }
@@ -179,8 +198,12 @@ function drawMicBtn() {
   const st = micState();
   if (b.dataset.state !== st) {
     b.dataset.state = st;
-    b.title = st === 'off' ? 'Start the microphone' : st === 'on' ? 'Mic on: tap to stop' : 'Mic stopped hearing you: tap to restart';
-    b.querySelector('span').textContent = st === 'off' ? 'Start mic' : st === 'on' ? 'Mic on' : 'Restart mic';
+    const name = currentMicLabel();
+    b.title = st === 'off' ? 'Start the microphone'
+      : st === 'on' ? `Mic on${name ? ` (${name})` : ''}: tap to stop`
+      : st === 'clip' ? 'The mic is clipping: turn the gain down on the mic or interface, or back off a little'
+      : 'Mic stopped hearing you: tap to restart';
+    b.querySelector('span').textContent = st === 'off' ? 'Start mic' : st === 'on' ? 'Mic on' : st === 'clip' ? 'Too loud' : 'Restart mic';
   }
 }
 (function micBtnLoop() {
@@ -190,7 +213,7 @@ function drawMicBtn() {
     const bar = b.querySelector('i');
     // level as a share of a loud-ish voice (-20 dB full scale), on a dB scale so quiet singing still shows
     const db = A.level > 1e-4 ? 20 * Math.log10(A.level) : -80;
-    bar.style.width = (b.dataset.state === 'on' ? clamp((db + 60) / 40, 0, 1) * 100 : 0) + '%';
+    bar.style.width = (b.dataset.state === 'on' || b.dataset.state === 'clip' ? clamp((db + 60) / 40, 0, 1) * 100 : 0) + '%';
   }
   requestAnimationFrame(micBtnLoop);
 })();
@@ -199,13 +222,27 @@ document.addEventListener('click', async e => {
   e.preventDefault();
   const st = micState();
   try {
-    if (st === 'on') { teardownMic(); setAudioSession('auto'); return; }
+    if (st === 'on' || st === 'clip') { teardownMic(); setAudioSession('auto'); return; }
     b.disabled = true;
     await (st === 'stuck' ? restartMic() : startMic());
     toast(st === 'stuck' ? 'Mic restarted' : 'Mic on. Sing a note: the bar should move.');
   } catch (err) {
     toast(err.name === 'NotAllowedError' ? 'Microphone permission was refused. Allow it in Safari\'s settings for this site.' : 'Mic error: ' + err.message, 6000);
   } finally { b.disabled = false; drawMicBtn(); }
+});
+
+// A mic plugged in or out while the app is open. If the chosen mic has just appeared and we're
+// on another one, or the one we're on has gone, switch without a reload.
+navigator.mediaDevices?.addEventListener?.('devicechange', async () => {
+  if (!A.stream) return;
+  const mics = await listMics(), want = preferredMicId();
+  const on = A.stream.getAudioTracks()[0]?.getSettings?.().deviceId;
+  const gone = on && !mics.some(m => m.deviceId === on);
+  const back = want && on !== want && mics.some(m => m.deviceId === want);
+  if (gone || back) {
+    try { await restartMic(); toast(`Mic switched to ${currentMicLabel() || 'the default mic'}`); } catch { micChanged(); }
+  }
+  document.dispatchEvent(new Event('vl-mics'));
 });
 
 function onPitch(fn) { A.listeners.add(fn); return () => A.listeners.delete(fn); }
@@ -2342,6 +2379,16 @@ route(/^\/settings$/, async () => {
       <p class="small dim">Off: songs are only split into vocals and music. The guide vocal is every voice in the song, and the notes are found from all of them. On: a second step pulls the backing vocals out of the guide onto their own slider, so harmonies don’t pull the notes off the tune, but sometimes it takes the wrong part (fixable in the editor).</p>
       <div class="row" id="splitApply"></div>
     </div>
+    <h2>Microphone on this device</h2>
+    <div class="card">
+      <div class="row"><label class="grow">Mic <select id="micPick"><option value="">System default</option></select></label><button class="primary" id="micTest">Test mic</button></div>
+      <div class="miccheck" id="micCheck" hidden>
+        <span class="small dim">Level</span><div class="meter" title="Your level; the line marks the room's noise"><i id="mcLvl"></i><u id="mcFloor"></u></div>
+        <span class="small dim">Hearing</span><span id="mcInfo" class="small">…</span>
+        <span></span><span id="mcTip" class="small"></span>
+      </div>
+      <p class="small dim">Each phone or computer remembers its own mic. On iPhone the list is short: connect AirPods and they're used automatically. On a computer pick your desk mic here, not the webcam. A mic on input 2 of an audio interface works too. Test it, sing a comfortable note, and follow the tip.</p>
+    </div>
     <h2>Timing on this device</h2>
     <div class="card">
       <div class="row"><label class="dim small">Extra delay (ms) <input type="number" id="lat" min="-300" max="1000" step="10" value="${deviceLatencyMs()}"></label>
@@ -2386,6 +2433,60 @@ route(/^\/settings$/, async () => {
   $('#splitBacking').onchange = async e => { await saveSettings({ splitBacking: e.target.checked }); toast(e.target.checked ? 'New songs will have the backing vocals split out' : 'New songs: just vocals and music'); splitInfo(); };
   splitInfo();
   api('/api/storage').then(st => { const el = $('#stSum'); if (el) el.textContent = `Vocal Lab is using ${fmtBytes(st.app.total)} (${st.songs.length} songs, ${st.takes.length} recordings). ${fmtBytes(st.disk.free)} free on the disk.`; }).catch(() => {});
+  // ---- mic picker and check
+  const pick = $('#micPick');
+  async function fillMics() {
+    const mics = await listMics(), want = preferredMicId();
+    pick.innerHTML = '<option value="">System default</option>' + mics.map((m, i) =>
+      `<option value="${esc(m.deviceId)}"${m.deviceId === want ? ' selected' : ''}>${esc(m.label || `Microphone ${i + 1} (test the mic to see names)`)}</option>`).join('');
+    if (want && !mics.some(m => m.deviceId === want)) pick.insertAdjacentHTML('beforeend', `<option value="${esc(want)}" selected>Saved mic (not plugged in)</option>`);
+  }
+  fillMics();
+  document.addEventListener('vl-mics', fillMics);
+  pick.onchange = async () => {
+    setPreferredMicId(pick.value);
+    if (A.stream) { try { await restartMic(); } catch (e) { toast('Mic error: ' + e.message); } }
+    toast(`Mic: ${currentMicLabel() || pick.selectedOptions[0].textContent}`);
+  };
+  let mcOff = [], mcRaf = 0, mcOpened = false;   // close the mic on leaving only if the test opened it
+  const mc = { floor: 1, peakDb: -99, clip: 0, ch: 0, note: null, voiced: 0, frames: 0 };
+  function mcStop() { mcOff.forEach(f => f()); mcOff = []; cancelAnimationFrame(mcRaf); }
+  $('#micTest').onclick = async () => {
+    const wasOn = !!A.stream;
+    try { await startMic(); } catch (e) { return toast(e.name === 'NotAllowedError' ? 'Microphone permission was refused.' : 'Mic error: ' + e.message, 6000); }
+    fillMics();   // names only show once the mic's been allowed
+    if (!wasOn) mcOpened = true;
+    mcStop(); Object.assign(mc, { floor: 1, peakDb: -99, clip: 0, note: null, voiced: 0, frames: 0 });
+    $('#micCheck').hidden = false;
+    mcOff.push(onRawPitch(f => {
+      mc.floor = Math.min(mc.floor * 1.003, Math.max(f.rms, 1e-5));   // quietest recent level = the room
+      const db = 20 * Math.log10(Math.max(f.rms, 1e-5));
+      mc.peakDb = Math.max(mc.peakDb - 0.15, db);
+      if (f.peak >= 0.98) mc.clip = performance.now();
+      mc.ch = f.ch || 0; mc.frames++;
+    }));
+    mcOff.push(onPitch(f => { if (f.midi !== null) { mc.note = f.midi; mc.voiced = performance.now(); } }));
+    const pct = db => clamp((db + 70) / 70, 0, 1) * 100;
+    (function draw() {
+      const floorDb = 20 * Math.log10(mc.floor), now = performance.now();
+      $('#mcLvl').style.width = pct(mc.peakDb) + '%';
+      $('#mcFloor').style.left = pct(floorDb) + '%';
+      const singing = now - mc.voiced < 400;
+      const set = A.stream?.getAudioTracks()[0]?.getSettings?.() || {};
+      $('#mcInfo').textContent = `${currentMicLabel() || 'mic'}${set.channelCount > 1 ? ` · input ${mc.ch + 1} of ${set.channelCount}` : ''}${set.sampleRate ? ` · ${Math.round(set.sampleRate / 1000)} kHz` : ''} · room ${Math.round(floorDb)} dB · you ${Math.round(mc.peakDb)} dB${singing ? ` · ${noteName(mc.note)}` : ''}`;
+      const gap = mc.peakDb - floorDb;
+      $('#mcTip').textContent = mc.frames < 50 ? 'Listening…'
+        : now - mc.clip < 2000 ? '🔴 Clipping. Turn the gain down on the mic or interface until loud notes stop doing this.'
+        : floorDb > -45 ? '🟠 The room is noisy for this mic (fan, computer, hum). Move away from it, or bring the mic closer and turn the gain down.'
+        : mc.peakDb < -40 ? 'Sing a comfortable note. If the bar barely moves, turn the gain up or get closer to the mic.'
+        : gap < 20 ? '🟠 Your voice is only a little louder than the room. Get closer to the mic or turn the gain up.'
+        : mc.peakDb > -6 ? '🟠 Close to clipping on loud notes. A bit less gain gives you headroom.'
+        : singing ? '🟢 Good level. The note shown should match what you sing.' : '🟢 Good level.';
+      mcRaf = requestAnimationFrame(draw);
+    })();
+  };
+  const prevCleanup = cleanup;
+  cleanup = () => { mcStop(); document.removeEventListener('vl-mics', fillMics); if (mcOpened) stopMic(); prevCleanup?.(); };
   $('#latSave').onclick = () => { setDeviceLatencyMs(Number($('#lat').value)); toast('Saved for this device'); };
   $('#latCheck').onclick = async () => { await timingCheck(); $('#lat').value = deviceLatencyMs(); };
   $('#save').onclick = async () => {

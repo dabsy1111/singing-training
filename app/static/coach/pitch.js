@@ -54,7 +54,16 @@ export class PitchSource {
   async start() {
     // Safari 17+: keep playback and recording on one audio route (AirPods etc.)
     try { if (navigator.audioSession) navigator.audioSession.type = 'play-and-record'; } catch {}
-    await this.tracker.start();
+    // Same mic as the main app (Settings → Microphone on this device), if it's plugged in.
+    let want = ''; try { want = localStorage.getItem('vl-mic-id') || ''; } catch {}
+    this.tracker._deviceId = want || null;
+    try { await this.tracker.start(); }
+    catch (e) {
+      if (!want || (e.name !== 'OverconstrainedError' && e.name !== 'NotFoundError')) throw e;
+      try { this.tracker.ctx?.close(); } catch {}   // the failed start left its context open
+      this.tracker._deviceId = null;
+      await this.tracker.start();
+    }
     const track = this.tracker.stream?.getAudioTracks()[0];
     const s = track?.getSettings?.() || {};
     this.granted = {
