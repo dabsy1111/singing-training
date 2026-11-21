@@ -17,6 +17,10 @@ services:
       YTDLP_AUTO_UPDATE: ${YTDLP_AUTO_UPDATE:-1}
       GROQ_API_KEY: ${GROQ_API_KEY:-}            # optional: transcribe lyrics LRCLIB doesn't have
       GROQ_LANGUAGE: ${GROQ_LANGUAGE:-}          # optional: e.g. en; blank = detect
+      # Charted melody notes (karaoke / rhythm-game charts); see README "Charted melody notes"
+      NOTE_SOURCES: ${NOTE_SOURCES:-allkaraoke,usdb,encore,hooktheory,st500,midi}
+      USDB_USER: ${USDB_USER:-}                  # optional: free account at usdb.animux.de adds ~50,000 UltraStar charts
+      USDB_PASSWORD: ${USDB_PASSWORD:-}
       # AI Coach page (/coach): text only, never audio. Set one provider's key.
       COACH_PROVIDER: ${COACH_PROVIDER:-}        # anthropic or openai; blank = whichever key is set
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}  # sk-ant-api03-... from console.anthropic.com

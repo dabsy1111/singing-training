@@ -20,6 +20,7 @@ A self-hosted singing trainer modelled on vocalify.me, with one big addition: pa
   - "Any octave counts" is still there if you'd rather be scored in whatever octave you sing.
 - **Grading.** Each note is scored on onset, transition and hold. Scoops into a note aren't penalised. Results show your score, notes landed, whether you sit sharp or flat, and your weakest notes.
 - **Latency.** A 10-second timing check at the start of each session measures your headphone and mic delay (sing "da" with a few beeps), saved per device. After each run it also checks whether your pitch line fits better shifted in time and offers a one-tap correction.
+- **Charted melody notes.** When a song is added, the app looks for a chart of its vocal line that people have already written out note by note, for karaoke games (UltraStar: AllKaraoke, USDB), rhythm games (Rock Band / Guitar Hero charts via Encore), Hooktheory's TheoryTab, the MIR-ST500 dataset and MIDI files (BitMidi). Each chart is lined up with the singer's pitch line in your video (offset, key, tempo, then phrase by phrase) and used only if its notes sit on it. The song page says where the notes came from; **Charts…** lists every chart found with how well it lines up, lets you switch between them or back to the detected notes, and searches again. See "Charted melody notes" below.
 - **Lyrics.** A panel under the notes follows the song, highlighting the current line (and word, for transcribed songs). Tap a line to jump there, nudge the timing with − and +, or edit the words. The automatic lookup reads "Artist - Song", "Song - Artist", "Artist | Song" and titles with only the song name (using the channel name), and gives up rather than show another band's song. If it misses, ↻ lists the LRCLIB versions to choose from, and ⏱ syncs them: play the song and tap **Now** as a line starts.
 - **Warm-ups.** Five-note scale, arpeggio, thirds, octave leap, long tone, minor and nine-note scales, plus chained series. Each climbs through your range semitone by semitone and back down.
 - **Range test and tuner.** Hold your lowest and highest comfortable notes to set your range.
@@ -55,7 +56,7 @@ Then open:
 
 **Updating:** press **Update** on the stack in Dockge. It pulls the newest image and restarts. Your songs, takes, history and settings live in the stack's `data/` folder and aren't touched.
 
-Optional settings for the `.env` box (defaults shown): `VL_HTTPS_PORT=8443` and `VL_TUNNEL_PORT=18095` (change either if the port is taken), `MAX_SONG_MINUTES=12`, `PITCH_MODEL=swiftf0`, `NOTE_MODEL=game_checked` (`game` keeps every GAME note, `contour` brings back the old notes from the pitch line), `LEAD_SPLIT=1`, `CREPE_MODEL=tiny`, `DEMUCS_MODEL=htdemucs`, `PROCESS_THREADS=5`, `YTDLP_AUTO_UPDATE=1`, `ANTHROPIC_API_KEY=` or `OPENAI_API_KEY=` (turns on the AI Coach page), `COACH_PROVIDER=`, `ANTHROPIC_MODEL=claude-haiku-5-5`, `OPENAI_MODEL=gpt-4o-mini`, `COACH_MAX_TOKENS=1024`, `COACH_THINKING=off`.
+Optional settings for the `.env` box (defaults shown): `VL_HTTPS_PORT=8443` and `VL_TUNNEL_PORT=18095` (change either if the port is taken), `MAX_SONG_MINUTES=12`, `PITCH_MODEL=swiftf0`, `NOTE_MODEL=game_checked` (`game` keeps every GAME note, `contour` brings back the old notes from the pitch line), `LEAD_SPLIT=1`, `CREPE_MODEL=tiny`, `DEMUCS_MODEL=htdemucs`, `PROCESS_THREADS=5`, `YTDLP_AUTO_UPDATE=1`, `ANTHROPIC_API_KEY=` or `OPENAI_API_KEY=` (turns on the AI Coach page), `COACH_PROVIDER=`, `ANTHROPIC_MODEL=claude-haiku-5-5`, `OPENAI_MODEL=gpt-4o-mini`, `COACH_MAX_TOKENS=1024`, `COACH_THINKING=off`, `NOTE_SOURCES=allkaraoke,usdb,encore,hooktheory,st500,midi` (charts to look melody notes up in; `none` turns it off), `USDB_USER=` and `USDB_PASSWORD=` (a free usdb.animux.de account adds the biggest karaoke chart database).
 
 ### Without Dockge
 
@@ -92,6 +93,23 @@ When a song is added, the server looks it up on [LRCLIB](https://lrclib.net), a 
 If LRCLIB doesn't have it and you've set `GROQ_API_KEY`, the separated vocal is sent to Groq's hosted Whisper (`whisper-large-v3`), which returns every word with a time. That costs about $0.11 per hour of audio, so a few cents for a hundred songs. Transcriptions can mishear words, especially shouted or heavily effected vocals; fix them with ✎. Lines Whisper invents over silence ("thanks for watching" and the like) are dropped.
 
 For songs added before this existed, press ↻ in the lyrics panel. If the title is messy, correct the artist and song in that dialog.
+
+### Charted melody notes
+
+The melody finder hears the notes from the separated vocal. For most well-known songs someone has already charted the vocal line by hand, with one note per syllable and the right pitch, so the app looks for those first. Sources, in the order they're searched (`NOTE_SOURCES` picks and orders them):
+
+| Source | What it is | How it's matched | Needs |
+|---|---|---|---|
+| `allkaraoke` | [AllKaraoke.party](https://allkaraoke.party): ~7,700 UltraStar charts, each timed to a YouTube video | same YouTube video, or artist + title | nothing |
+| `usdb` | [usdb.animux.de](https://usdb.animux.de): the big UltraStar database (~50,000 charts) | artist + title | a free account: `USDB_USER`, `USDB_PASSWORD` |
+| `encore` | [Encore](https://www.enchor.us): Clone Hero / YARG chart search; Rock Band and Guitar Hero charts with a vocals part | artist + title | nothing (only the chart's notes file is downloaded, not its audio) |
+| `hooktheory` | Hooktheory TheoryTab melodies as released with [Sheet Sage](https://github.com/chrisdonahue/sheetsage) (CC BY-NC-SA 3.0): ~26,000 verse/chorus sections timed to ~15,000 YouTube videos | same video, or artist + title | nothing (a 20 MB download, once) |
+| `st500` | [MIR-ST500](https://github.com/york135/singing_transcription_ICASSP2021): 500 pop songs (mostly Mandarin) with hand-labelled vocal notes | same YouTube video only | nothing |
+| `midi` | [BitMidi](https://bitmidi.com) MIDI files; the vocal or melody track | artist + title | nothing |
+
+Charts are rarely timed to your exact video, so each one is lined up with the singer's pitch line: the whole chart first (offset, key and octave, and tempo within ±3%, or ±15% for MIDI files), then each phrase nudged on its own. A chart is used when at least ~65% of its notes are on the singer's pitch (75% for MIDI) and it covers most of the singing. Hooktheory only charts sections, so its sections that line up are put in and the detected notes fill the rest. If nothing lines up, the detected notes stay. Hand edits in the editor are kept; **Charts…** on the song page shows every chart found, with its scores, and lets you pick one, go back to the detected notes, or search again. Songs added before this existed get a "Look up all" banner on the Songs page (under a minute per song, no audio work).
+
+Tested (Nov 2026) against the official Rock Band charts of 8 songs, with the audio offset by a random 2–15 s: AllKaraoke charts timed to a *different* video agreed with the official chart on 96–99% of their pitch (Bohemian Rhapsody 87%, Take On Me 81%) and put 89–97% of note starts within 100 ms of the official ones; notes detected from the vocal agreed on 71–94% with 61–84% of starts that close. The official chart itself was found at the right offset to within 50 ms.
 
 ### iPhone and AirPods
 
@@ -140,6 +158,7 @@ app/mdx.py            runs MDX-Net ONNX models (the Karaoke 2 lead/backing split
 app/db.py             SQLite
 app/auth.py           password sign-in (VL_PASSWORD), session cookie
 app/lyrics.py         LRCLIB lookup, Groq Whisper transcription, timing alignment
+app/notesources.py    charted melody notes: UltraStar / Rock Band / Hooktheory / MIDI lookups, lining charts up with the pitch line
 app/static/           Front end, plain JS with no build step
   lessons.js          the course: lesson text, cues, exercises, pass marks
   course.js           lesson engine, exercise types, scoring and tips

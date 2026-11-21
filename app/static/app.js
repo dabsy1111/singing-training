@@ -1152,6 +1152,18 @@ route(/^\/$/, async () => {
         <span class="grow small">${noBack.length === 1 ? '1 song has' : `${noBack.length} songs have`} the backing vocals mixed into the music. Re-analyse to give them their own volume slider (a few minutes per song; lyrics, scores and your key are kept).</span>
         <button data-split>Split ${noBack.length === 1 ? 'it' : 'them'}</button>
       </div>`;
+    const noLook = songs.filter(x => x.no_lookup && x.status === 'ready');
+    if (!old.length && !noBack.length && noLook.length) $('#outdated').innerHTML = `
+      <div class="card row">
+        <span class="grow small">Melody notes can now come from karaoke and rhythm-game charts, which people wrote out note by note. ${noLook.length === 1 ? '1 song hasn’t' : `${noLook.length} songs haven’t`} been looked up yet (under a minute each, nothing else changes).</span>
+        <button data-look>Look up ${noLook.length === 1 ? 'it' : 'all'}</button>
+      </div>`;
+    const look = $('#outdated [data-look]');
+    if (look) look.onclick = async () => {
+      look.disabled = true;
+      try { await api('/api/songs/note-sources/all', { method: 'POST' }); } catch (err) { toast(err.message); }
+      refresh();
+    };
     const btn = $('#outdated [data-reall]') || $('#outdated [data-split]');
     if (btn) btn.onclick = async () => {
       btn.disabled = true;
@@ -1301,6 +1313,53 @@ function bestOctave(notes, s) {
 const OCT_KEY = id => `vl-octave-${id}`;
 function savedOctave(id) { try { return localStorage.getItem(OCT_KEY(id)) || 'auto'; } catch { return 'auto'; } }
 function saveOctave(id, v) { try { localStorage.setItem(OCT_KEY(id), v); } catch { /* ignore */ } }
+
+// ---- charted notes: melody notes from karaoke / rhythm-game charts instead of the detected ones
+const NOTE_SRC = { allkaraoke: 'AllKaraoke', usdb: 'USDB', encore: 'Encore', hooktheory: 'Hooktheory', st500: 'MIR-ST500', midi: 'BitMidi', detected: 'Detected' };
+const pct = x => `${Math.round((x || 0) * 100)}%`;
+function noteSourceLine(an) {
+  const ns = an.note_source;
+  if (!ns) return `Melody notes: <b>detected from the singer</b> <button data-notesrc>Charts…</button>`;
+  const kind = ns.source === 'encore' ? 'rhythm-game chart' : ns.source === 'midi' ? 'MIDI file' : ns.source === 'hooktheory' ? 'TheoryTab sections' : ns.source === 'st500' ? 'hand-labelled notes' : 'karaoke chart';
+  return `Melody notes: <b>${esc(NOTE_SRC[ns.source] || ns.source)} ${kind}</b>${ns.by ? ` by ${esc(ns.by)}` : ''}${ns.mode === 'merge' ? ' (the parts it covers; detected notes elsewhere)' : ''}, ${pct(ns.metrics?.precision)} on the singer's pitch <button data-notesrc>Charts…</button>`;
+}
+async function noteSourcePicker(id, an) {
+  const m = modal(`<h2 style="margin-top:0">Where the melody notes come from</h2><div id="nsBody"><p class="dim">Loading…</p></div>`);
+  let info;
+  try { info = await api(`/api/songs/${id}/note-sources`); } catch (e) { m.querySelector('#nsBody').innerHTML = `<p>${esc(e.message)}</p>`; return; }
+  const verdict = c => c.verdict === 'use' ? '<span class="pill ready">lines up</span>'
+    : c.verdict === 'merge' ? '<span class="pill">fills in parts</span>' : '<span class="pill error">doesn’t line up</span>';
+  const stats = mt => mt ? `${pct(mt.precision)} on pitch · ${pct(mt.on_voice)} where the singer sings · covers ${pct(mt.coverage)} of the singing` : 'couldn’t be lined up';
+  const row = (key, title, sub, mt, badge) => `<label class="ns-row"><input type="radio" name="ns" value="${esc(key)}" ${info.current === key ? 'checked' : ''}>
+      <span><b>${title}</b> ${badge || ''}<br><span class="dim small">${sub ? sub + '<br>' : ''}${stats(mt)}</span></span></label>`;
+  const off = Object.entries(info.errors || {}).map(([k, v]) => `${NOTE_SRC[k] || k}: ${esc(v)}`);
+  const body = !info.looked ? `<p>This song hasn’t been looked up in the chart sources yet.</p>` : `
+    <p class="dim small" style="margin-top:0">Charts are written out by people, note by note, for karaoke and rhythm games. One is used when its notes sit on the singer’s pitch line in this recording. The detected notes are made from that pitch line, so they always match it; what they miss is how much of the singing they cover and where one note should end and the next begin.</p>
+    ${row('detected', 'Detected from the singer', 'The app’s own melody finder (GAME + SwiftF0)', info.detected_metrics)}
+    ${info.candidates.map(c => row(c.key, `${esc(NOTE_SRC[c.source] || c.source)}: ${esc(c.title)}`,
+      `${c.by ? 'by ' + esc(c.by) + ' · ' : ''}${c.count} notes${c.same_video ? ' · timed to this same video' : ''}${c.scale && Math.abs(c.scale - 1) > 0.001 ? ` · tempo ×${c.scale.toFixed(3)}` : ''}${c.url ? ` · <a href="${esc(c.url)}" target="_blank" rel="noopener">source</a>` : ''}`,
+      c.metrics, verdict(c))).join('')}
+    ${info.candidates.length ? '' : '<p class="dim small">No charts found for this song.</p>'}
+    <p class="dim small">Searched ${info.query?.hyps?.map(h => esc(h.filter(Boolean).join(' – '))).join(', ') || 'nothing'}${info.at ? ' on ' + new Date(info.at * 1000).toLocaleDateString() : ''}.${off.length ? ' Not searched: ' + off.join('; ') + '.' : ''}</p>`;
+  m.querySelector('#nsBody').innerHTML = `${body}
+    ${info.edited ? '<p class="small">Choosing a source replaces your hand edits to the notes.</p>' : ''}
+    <div class="row" style="gap:.5em;flex-wrap:wrap;margin-top:.8em">
+      ${info.looked ? '<button class="primary" id="nsUse">Use selected</button><button id="nsAuto">Pick automatically</button>' : ''}
+      <button id="nsAgain">${info.looked ? 'Search again' : 'Search now'}</button>
+      <button id="nsClose">Close</button>
+    </div>`;
+  const done = () => { m.remove(); location.reload(); };
+  const choose = async key => {
+    if (info.edited && !confirm('Replace your hand-edited notes?')) return;
+    try { await api(`/api/songs/${id}/note-sources/choose`, { method: 'POST', json: { key } }); done(); } catch (e) { toast(e.message); }
+  };
+  m.querySelector('#nsClose').onclick = () => m.remove();
+  m.querySelector('#nsUse') && (m.querySelector('#nsUse').onclick = () => { const v = m.querySelector('input[name=ns]:checked'); if (v) choose(v.value); });
+  m.querySelector('#nsAuto') && (m.querySelector('#nsAuto').onclick = () => choose(null));
+  m.querySelector('#nsAgain').onclick = async () => {
+    try { await api(`/api/songs/${id}/note-sources/refresh`, { method: 'POST' }); m.remove(); toast('Searching the chart sources…'); location.hash = '#/'; } catch (e) { toast(e.message); }
+  };
+}
 
 // ---- lyrics panel: follows the song, current line highlighted, tap a line to jump there
 function modal(html) {
@@ -1571,6 +1630,7 @@ route(/^\/song\/([0-9a-f]{12})(?:\?lesson=(\d\.\d))?$/, async (id, lessonId) => 
       <label><input type="checkbox" id="showLyr" ${songPref('all', 'lyrics', '1') === '1' ? 'checked' : ''}> Show lyrics</label>
     </div>
     <div class="legend small"><span><i style="background:var(--green)"></i>within ${s.greenCents}¢</span><span><i style="background:var(--amber)"></i>within ${s.amberCents}¢</span><span><i style="background:var(--red)"></i>off</span><span>Drag the track to move around when stopped. Headphones work best.</span></div>
+    <p class="small" id="noteSrc">${noteSourceLine(an)}</p>
     <p class="dim small">Wrong notes, or the guide vocal singing a backing part? <a href="#/song/${id}/edit">Fix them in the editor</a>${an.notes_edited || an.vocal_fixes?.length ? ' (this song has your fixes in it)' : ''}.</p>
     ${an.backing || !an.lead_split ? '' : `<p class="dim small" id="backHint">Want the backing vocals on their own slider? <button id="splitBack">Re-analyse this song</button> (takes a few minutes; lyrics, key and scores are kept).</p>`}
     ${Math.abs(an.tuning || 0) >= 10 ? `<p class="dim small">Recording is tuned ${an.tuning > 0 ? '+' : ''}${an.tuning}¢ from A440; targets follow it.</p>` : ''}
@@ -1644,11 +1704,11 @@ route(/^\/song\/([0-9a-f]{12})(?:\?lesson=(\d\.\d))?$/, async (id, lessonId) => 
       urls = Object.fromEntries(Object.entries(urls).map(([k, u]) => [k, u && `${u}?r=${an.audio_rev || 0}`]));
       const [accomp, backing, vocals] = await Promise.all([loadBuffer(urls.band || urls.accompaniment),
         urls.band && urls.backing ? loadBuffer(urls.backing) : null, loadBuffer(urls.vocals)]);
-      if (mine !== audioReq) return;
+      if (mine !== audioReq || !$('#loadmsg')) return;     // left the page while it loaded
       P.audio.buffers = { accomp, backing, vocals };
       P.audio.rate = speed / 100;
       $('#loadmsg').textContent = ''; $('#play').disabled = false;
-    } catch (e) { if (mine === audioReq) $('#loadmsg').textContent = 'Audio failed to load: ' + e.message; }
+    } catch (e) { if (mine === audioReq && $('#loadmsg')) $('#loadmsg').textContent = 'Audio failed to load: ' + e.message; }
   }
   $('#tr').onchange = () => {
     if (busy()) { $('#tr').value = String(tr); return; }
@@ -1659,6 +1719,7 @@ route(/^\/song\/([0-9a-f]{12})(?:\?lesson=(\d\.\d))?$/, async (id, lessonId) => 
     if (busy()) { $('#speed').value = String(speed); return; }
     speed = Number($('#speed').value); setSongPref(id, 'speed', String(speed)); loadAudio();
   };
+  $('#noteSrc').onclick = e => { if (e.target.closest('[data-notesrc]')) noteSourcePicker(id, an); };
   $('#splitBack') && ($('#splitBack').onclick = async () => {
     if (!confirm('Re-analyse this song to split out the backing vocals? It takes a few minutes and the song can’t be sung until it’s done.')) return;
     try { await api(`/api/songs/${id}/reanalyse`, { method: 'POST' }); location.hash = '#/'; } catch (e) { toast(e.message); }

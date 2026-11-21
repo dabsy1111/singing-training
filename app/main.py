@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import auth, coach, db, lyrics, pipeline, storage
+from . import auth, coach, db, lyrics, notesources, pipeline, storage
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("main")
@@ -178,6 +178,7 @@ def songs():
             r["outdated"] = bool(v and v < pipeline.ANALYSIS_VERSION and (has_src or pipeline.can_renote(pipeline.song_dir(r["id"]))))
             # analysed before backing vocals were kept as their own stem
             r["no_backing"] = bool(not r["outdated"] and has_src and st.get("splitBacking") and _no_backing(r["id"]))
+            r["no_lookup"] = not (pipeline.song_dir(r["id"]) / "note_sources.json").exists()
     return rows
 
 
@@ -517,6 +518,90 @@ def reset_notes(song_id: str):
     lo, hi = an["range"] or (None, None)
     db.update_song(song_id, note_low=lo, note_high=hi)
     return {"notes": an["notes"], "range": an["range"]}
+
+
+# --------------------------------------------------------------------------
+# charted notes: melody notes from karaoke / rhythm-game charts (app/notesources.py)
+# --------------------------------------------------------------------------
+
+def _note_sources(song_id):
+    p = pipeline.song_dir(song_id) / "note_sources.json"
+    if not p.exists():
+        return None
+    try:
+        return json.loads(p.read_text())
+    except ValueError:
+        return None
+
+
+@app.get("/api/songs/{song_id}/note-sources")
+def note_sources(song_id: str):
+    """Charts found for this song, best first (without their notes), and which one is in use."""
+    _, an = _read_analysis(song_id)
+    found = _note_sources(song_id)
+    cands = []
+    for c in (found or {}).get("candidates") or []:
+        cands.append({**{k: v for k, v in c.items() if k != "notes"}, "key": f"{c['source']}:{c['id']}",
+                      "count": len(c.get("notes") or [])})
+    cur = an.get("note_source")
+    return {"looked": found is not None, "at": (found or {}).get("at"), "errors": (found or {}).get("errors") or {},
+            "detected_metrics": (found or {}).get("detected_metrics"), "query": (found or {}).get("query"),
+            "candidates": cands, "current": f"{cur['source']}:{cur['id']}" if cur else "detected",
+            "mode": (cur or {}).get("mode"), "choice": an.get("note_choice"), "edited": bool(an.get("notes_edited")),
+            "sources": [{"key": k, "name": notesources.NAME.get(k, k),
+                         "ready": not (k == "usdb" and not (notesources.USDB_USER and notesources.USDB_PASSWORD))}
+                        for k in notesources.SOURCES]}
+
+
+class NoteChoiceIn(BaseModel):
+    key: str | None = None     # "detected", "<source>:<id>", or null = pick automatically
+
+
+@app.post("/api/songs/{song_id}/note-sources/choose")
+def choose_note_source(song_id: str, body: NoteChoiceIn):
+    """Use one chart's notes (or the detected ones). Replaces hand edits to the notes."""
+    _ready_song(song_id)
+    p, an = _read_analysis(song_id)
+    found = _note_sources(song_id) or {"candidates": []}
+    if body.key and body.key != "detected" and not any(
+            f"{c['source']}:{c['id']}" == body.key and c.get("notes") for c in found["candidates"]):
+        raise HTTPException(404, "That chart isn't in the list any more; look again")
+    if an.get("notes_detected") is None:
+        an["notes_detected"] = an.get("notes_auto") if an.get("notes_edited") and an.get("notes_auto") is not None else an.get("notes") or []
+    an.pop("notes_auto", None)
+    an.pop("notes_edited", None)
+    pipeline.apply_note_choice(an, found, body.key)
+    if body.key is None:
+        an.pop("note_choice", None)
+    else:
+        an["note_choice"] = body.key
+    _write_analysis(p, an)
+    lo, hi = an["range"] or (None, None)
+    db.update_song(song_id, note_low=lo, note_high=hi)
+    return {"notes": an["notes"], "range": an["range"], "note_source": an.get("note_source")}
+
+
+@app.post("/api/songs/{song_id}/note-sources/refresh")
+def refresh_note_sources(song_id: str):
+    """Search the chart sources again (a minute or so; no audio work)."""
+    _ready_song(song_id)
+    _read_analysis(song_id)
+    db.update_song(song_id, status="queued", stage="Waiting in queue", error=None)
+    pipeline.enqueue(song_id, {"lookup_notes": True})
+    return db.get_song(song_id)
+
+
+@app.post("/api/songs/note-sources/all")
+def note_sources_all():
+    """Look up charted notes for every ready song that hasn't been looked up yet."""
+    done = []
+    for r in db.list_songs():
+        d = pipeline.song_dir(r["id"])
+        if r["status"] == "ready" and (d / "analysis.json").exists() and not (d / "note_sources.json").exists():
+            db.update_song(r["id"], status="queued", stage="Waiting in queue", error=None)
+            pipeline.enqueue(r["id"], {"lookup_notes": True})
+            done.append(r["id"])
+    return {"queued": done}
 
 
 @app.put("/api/songs/{song_id}/vocal-fixes")

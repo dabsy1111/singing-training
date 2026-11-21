@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import queue
+import re
 import shutil
 import subprocess
 import sys
@@ -96,6 +97,8 @@ def process(song_id: str, job: dict):
     src = d / "source.wav"
     if "fix_vocals" in job:
         return refix(song_id, d, job["fix_vocals"], job.get("ranges") or [])
+    if job.get("lookup_notes"):
+        return lookup_notes_job(song_id, d)
     split_wanted = split_backing_wanted()
     if (job.get("unsplit") or (job.get("reanalyse") and not split_wanted)) and is_split(d):
         return unsplit(song_id, d)
@@ -186,6 +189,9 @@ def process(song_id: str, job: dict):
         for k in ("contour", "notes", "range", "loud", "loud_hop", "note_model"):
             analysis[k] = fixed[k]
         analysis["vocal_fixes"] = fixes
+    if "note_choice" in old:
+        analysis["note_choice"] = old["note_choice"]
+    external_notes(song_id, d, analysis)
     keep_edited_notes(old, analysis)
     (d / "analysis.json").write_text(json.dumps(analysis, separators=(",", ":")))
 
@@ -424,9 +430,116 @@ def renote(song_id: str, d: Path):
             analysis[k] = old[k]
     analysis["v"] = ANALYSIS_VERSION
     analysis["pitch_model"] = PITCH_MODEL
+    if "note_choice" in old:
+        analysis["note_choice"] = old["note_choice"]
+    external_notes(song_id, d, analysis)
     keep_edited_notes(old, analysis)
     (d / "analysis.json").write_text(json.dumps(analysis, separators=(",", ":")))
     lo, hi = analysis.get("range") or (None, None)
+    db.update_song(song_id, status="ready", stage=None, error=None, note_low=lo, note_high=hi)
+
+
+# --------------------------------------------------------------------------
+# charted notes: karaoke / rhythm-game charts instead of the melody finder's guess
+# --------------------------------------------------------------------------
+
+def pitch_line(analysis: dict) -> np.ndarray:
+    """The singer's pitch in semitones with the song's tuning taken off (what notes are in)."""
+    c = np.array([np.nan if v is None else v for v in analysis.get("contour") or []], dtype=float)
+    return c - float(analysis.get("tuning") or 0) / 100
+
+
+def note_query(song_id: str, d: Path) -> dict:
+    from . import lyrics
+    from .notesources import video_id
+    s = db.get_song(song_id) or {}
+    url = s.get("source") or ""
+    meta = ensure_meta(d, url) if url.startswith("http") else {}
+    title = s.get("title") or ""
+    hyps = []
+    clip0 = 0.0
+    pp = d / "part.json"
+    if pp.exists():
+        try:
+            part = json.loads(pp.read_text())
+            if part.get("artist") and part.get("title"):
+                hyps.append((part["artist"], part["title"]))
+            title = re.sub(r"\s*\([^)]*\)\s*$", "", title)
+            if part.get("done") and not part.get("skipped") and part.get("clip"):
+                clip0 = float(part["clip"][0])
+        except ValueError:
+            pass
+    for h in lyrics.guesses(title, meta):
+        if h not in hyps:
+            hyps.append(h)
+    return {"video": video_id(url), "hyps": hyps[:4], "title": title, "clip0": clip0}
+
+
+def apply_note_choice(analysis: dict, found: dict, choice: str | None = None) -> dict | None:
+    """Set analysis["notes"] from the chosen chart (or the best one), keeping the detected
+    notes in notes_detected. choice: "detected", "<source>:<id>", or None for automatic."""
+    detected = analysis.get("notes_detected")
+    if detected is None:
+        detected = analysis["notes_detected"] = analysis.get("notes") or []
+    cands = found.get("candidates") or []
+    pick = None
+    if choice and choice != "detected":
+        pick = next((c for c in cands if f"{c['source']}:{c['id']}" == choice and c.get("notes")), None)
+    elif choice is None:
+        pick = next((c for c in cands if c["verdict"] == "use"), None) or \
+            next((c for c in cands if c["verdict"] == "merge"), None)
+    if pick is None:
+        analysis["notes"] = detected
+        analysis.pop("note_source", None)
+    else:
+        chart = [{"t0": n["t0"], "t1": n["t1"], "midi": n["midi"]} for n in pick["notes"]]
+        mode = "merge" if pick["verdict"] == "merge" or (pick.get("partial") and choice) else "use"
+        from .notesources import merge_into
+        analysis["notes"] = merge_into(detected, chart) if mode == "merge" else chart
+        analysis["note_source"] = {k: pick.get(k) for k in ("source", "id", "title", "by", "url", "metrics", "offset",
+                                                            "scale", "shift", "same_video")}
+        analysis["note_source"]["mode"] = mode
+    analysis["range"] = note_range(analysis["notes"])
+    return pick
+
+
+def external_notes(song_id: str, d: Path, analysis: dict):
+    """Look the song up in karaoke and rhythm-game charts; use a chart whose notes sit on the
+    singer's pitch line. Never fails the song: on any trouble the detected notes stay."""
+    from . import notesources
+    if not notesources.SOURCES or not analysis.get("contour"):
+        return
+    stage(song_id, "Looking for charted melody notes (karaoke and rhythm-game charts)")
+    try:
+        q = note_query(song_id, d)
+        found = notesources.lookup(q, pitch_line(analysis), float(analysis.get("duration") or len(analysis["contour"]) * HOP_S))
+        found["detected_metrics"] = notesources.metrics(pitch_line(analysis), analysis.get("notes_detected") or analysis["notes"])
+        found["query"] = {k: q[k] for k in ("video", "hyps", "title")}
+        (d / "note_sources.json").write_text(json.dumps(found, separators=(",", ":"), default=float))
+    except Exception:  # noqa: BLE001 - charts are a bonus; the detected notes still work
+        log.exception("note lookup failed for %s", song_id)
+        return
+    pick = apply_note_choice(analysis, found, analysis.get("note_choice"))
+    if pick:
+        log.info("%s: notes from %s %s (%s)", song_id, pick["source"], pick["title"], pick["verdict"])
+
+
+def lookup_notes_job(song_id: str, d: Path):
+    """Look for charted notes again for a song that's already analysed (no audio work)."""
+    p = d / "analysis.json"
+    an = json.loads(p.read_text())
+    an.setdefault("notes_detected", an.get("notes_auto") if an.get("notes_edited") else an.get("notes") or [])
+    edited = an.get("notes_edited")
+    hand = an.get("notes") if edited else None
+    if edited:
+        an["notes"] = an["notes_detected"]
+    external_notes(song_id, d, an)
+    if edited:          # hand-edited notes stay; the new pick is what "reset" goes back to
+        an["notes_auto"] = an["notes"]
+        an["notes"] = hand
+        an["range"] = note_range(hand)
+    p.write_text(json.dumps(an, separators=(",", ":")))
+    lo, hi = an.get("range") or (None, None)
     db.update_song(song_id, status="ready", stage=None, error=None, note_low=lo, note_high=hi)
 
 
@@ -575,8 +688,11 @@ def _refix(song_id: str, d: Path, fixes: list[dict], ranges: list):
         new = analyse_vocals(d / "vocals.mp3", tuning=(an.get("tuning") or 0) / 100)
         for k in ("contour", "loud", "loud_hop"):
             an[k] = new[k]
-        an["notes"] = merge_notes(an.get("notes") or [], new["notes"], ranges)
-        if an.get("notes_auto") is not None:
+        if an.get("notes_detected") is not None:
+            an["notes_detected"] = merge_notes(an["notes_detected"], new["notes"], ranges)
+        if not an.get("note_source"):     # notes from a chart don't depend on the vocal split
+            an["notes"] = merge_notes(an.get("notes") or [], new["notes"], ranges)
+        if an.get("notes_auto") is not None and not an.get("note_source"):
             an["notes_auto"] = merge_notes(an["notes_auto"], new["notes"], ranges)
         an["range"] = note_range(an["notes"])
     tmp = d / ".analysis.json"
