@@ -527,6 +527,7 @@ class Practice {
     this.trail = [];
     // Your loudness is shown against your own loud singing on this device (remembered between runs).
     this.loudPeak = loudRef(); this.loudSung = []; this._ld = null;
+    this.octVotes = []; this.oct = this.lastOct || 0;   // start from last run's octave: no spike on the first note
     const lead = 0.15;
     this.startCtx = ctx.currentTime + lead; this.startPos = from;
     this.master = ctx.createGain(); this.master.connect(ctx.destination);
@@ -571,6 +572,7 @@ class Practice {
   setPart(notes, shift, contourShift = shift) {
     if (this.playing) return;
     this.target.notes = notes;
+    if (shift !== this.shift) this.lastOct = 0;   // notes moved octave: relearn where you sing
     this.shift = shift;
     this.contourShift = contourShift;
     this.notes = notes.map(n => ({ ...n, midi: n.midi + shift, frames: [], result: null }));
@@ -588,15 +590,28 @@ class Practice {
     let c = null;
     if (n && f.midi !== null) c = centsOff(f.midi, n.midi + this.tune, s.octaveFree);
     if (n && t >= this.section.from) n.frames.push({ dt: t - n.t0, c, rms: f.rms });
-    let show = f.midi;
-    if (show !== null && s.octaveFree && n) show = n.midi + this.tune + c / 100;   // draw in the target's octave
+    // Which octave you're singing in, relative to the notes: a vote over the last ~0.5 s of sung
+    // notes. A man singing along in the original singer's octave over an "octave down" part
+    // reads +1, and so does anyone singing the melody up an octave.
+    if (n && f.midi !== null) {
+      this.octVotes.push(Math.round((f.midi - (n.midi + this.tune)) / 12));
+      if (this.octVotes.length > 50) this.octVotes.shift();
+      const tally = {};
+      for (const v of this.octVotes) tally[v] = (tally[v] || 0) + 1;
+      const [best, cnt] = Object.entries(tally).sort((a, b) => b[1] - a[1])[0];
+      if (cnt >= this.octVotes.length * 0.6 && this.octVotes.length >= 10) this.oct = this.lastOct = +best;
+    }
+    // Draw your line in the notes' octave, between notes too. Before this, only frames over a
+    // note were folded down, so every gap and every early start shot off the top of the chart.
+    let show = f.midi === null ? null : f.midi - 12 * this.oct;
+    if (show !== null && s.octaveFree && n) show = n.midi + this.tune + c / 100;   // exactly as graded
     // loudness in dB (mic full scale), lightly smoothed; drawn in the band under the melody
     const db = f.rms > 1e-4 ? 20 * Math.log10(f.rms) : null;
     this._ld = db === null ? null : this._ld == null ? db : this._ld * 0.6 + db * 0.4;
     if (this._ld !== null && f.midi !== null) { this.loudPeak = Math.max(this.loudPeak, this._ld); this.loudSung.push(this._ld); }
     this.trail.push({ t, midi: f.midi, show, c, onNote: !!n, rms: f.rms, ld: this._ld });
     this.opts.onFrame?.(f, t, n, c);
-    this.current = { midi: f.midi, c, n };
+    this.current = { midi: f.midi, c, n, oct: this.oct };
     // grade notes that have finished
     for (const m of this.notes) if (!m.result && m.t1 < t && m.t0 >= this.section.from && m.frames.length) m.result = gradeNote(m, s);
   }
@@ -613,6 +628,9 @@ class Practice {
     this.unsub?.();
     const s = this.opts.settings;
     for (const m of this.notes) if (!m.result && m.t0 >= this.section.from && m.t1 <= reached && m.frames.length) m.result = gradeNote(m, s);
+    if (!s.octaveFree && this.oct && reached - this.section.from > 5) {
+      toast(`You sang ${Math.abs(this.oct) === 1 ? 'an octave' : Math.abs(this.oct) + ' octaves'} ${this.oct > 0 ? 'above' : 'below'} the notes, so they scored as misses. Change "Sing it" to match where you sing, or tick "Any octave counts".`, 9000);
+    }
     let take = null;
     if (this.recorder) {
       take = await new Promise(res => {
@@ -709,8 +727,8 @@ class Practice {
       if (p.t < t0 - 0.1 || p.show === null) { prev = null; continue; }
       const X = x(p.t), Y = y(clamp(p.show, lo - 0.4, hi + 0.4));
       g.strokeStyle = p.c === null ? 'rgba(220,225,240,0.6)' : Math.abs(p.c) <= s.greenCents ? green : Math.abs(p.c) <= s.amberCents ? amber : red;
-      if (prev && p.t - prev.t < 0.05) { g.beginPath(); g.moveTo(prev.X, prev.Y); g.lineTo(X, Y); g.stroke(); }
-      prev = { X, Y, t: p.t };
+      if (prev && p.t - prev.t < 0.05 && Math.abs(p.show - prev.m) < 7) { g.beginPath(); g.moveTo(prev.X, prev.Y); g.lineTo(X, Y); g.stroke(); }
+      prev = { X, Y, t: p.t, m: p.show };
     }
     g.restore();
     if (LH) this.drawLoudness(g, x, t0, t1, PH, LH, W);
@@ -735,8 +753,16 @@ class Practice {
     const cur = this.playing ? this.current : null;
     if (cur && cur.midi !== null) {
       const c = cur.c;
-      const word = c === null ? '' : Math.abs(c) <= s.greenCents ? 'on it' : c > 0 ? 'aim lower' : 'aim higher';
-      this.hud.innerHTML = `<div class="big">${noteName(cur.midi)}</div><div class="dim small">${c === null ? '' : (c > 0 ? '+' : '') + Math.round(c) + '¢ · ' + word}</div>`;
+      const o = cur.oct || 0;
+      // Singing a whole octave off (not octave-free): say that, not "+1200¢ aim lower"
+      const offOct = !s.octaveFree && o !== 0 && c !== null;
+      const cc = offOct ? c - 1200 * o : c;
+      const word = cc === null ? '' : Math.abs(cc) <= s.greenCents ? 'on it' : cc > 0 ? 'aim lower' : 'aim higher';
+      const octWord = o === 0 ? '' : `${Math.abs(o) === 1 ? 'an octave' : Math.abs(o) + ' octaves'} ${o > 0 ? 'above' : 'below'} the line`;
+      const line2 = cc === null ? octWord
+        : offOct ? `${octWord} · ${word} · tick Any octave counts or change Sing it`
+        : `${(cc > 0 ? '+' : '') + Math.round(cc)}¢ · ${word}${octWord ? ' · ' + octWord : ''}`;
+      this.hud.innerHTML = `<div class="big">${noteName(cur.midi)}</div><div class="dim small">${line2}</div>`;
     } else this.hud.innerHTML = `<div class="dim small">${fmtTime(Math.max(0, now))}</div>`;
   }
 
@@ -811,7 +837,7 @@ class Practice {
     if (m.length && Math.max(...m) - Math.min(...m) + 3 > rows) m = pick(now - 0.2, now + 2.5);
     let centre = this.viewCentre ?? (flo + fhi) / 2;
     if (m.length) centre = (Math.max(...m) + Math.min(...m)) / 2;
-    else if (this.current?.midi != null) centre = this.current.midi;   // gap in the melody: keep near your voice
+    else if (this.current?.midi != null) centre = this.current.midi - 12 * (this.oct || 0);   // gap in the melody: keep near your voice, in the notes' octave
     centre = clamp(centre, flo + (rows - 1) / 2, fhi - (rows - 1) / 2);
     // Glide rather than jump, so the notes don't twitch about.
     const t = performance.now(), dt = Math.min(0.5, ((t - (this._vt || t)) / 1000));
