@@ -53,7 +53,7 @@ ALLKARAOKE = os.environ.get("ALLKARAOKE_URL", "https://allkaraoke.party")
 HOOKTHEORY_URL = os.environ.get(
     "HOOKTHEORY_URL", "https://github.com/chrisdonahue/sheetsage-data/raw/refs/heads/main/hooktheory/Hooktheory.json.gz")
 ST500_BASE = os.environ.get(
-    "ST500_URL", "https://raw.githubusercontent.com/york135/singing_transcription_ICASSP2021/main/MIR-ST500_20210206")
+    "ST500_URL", "https://raw.githubusercontent.com/york135/singing_transcription_ICASSP2021/master/MIR-ST500_20210206")
 INDEX_MAX_AGE = 7 * 86400        # re-download song indexes weekly
 
 NAME = {"allkaraoke": "AllKaraoke", "usdb": "USDB", "encore": "Encore", "hooktheory": "Hooktheory",
