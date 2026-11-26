@@ -258,6 +258,17 @@ function autoLatency() {
   return l;
 }
 
+// Where a song's audio lives, in a key and speed: the original files, or copies the server
+// shifts or slows once and caches. Keys: band|accompaniment, backing?, vocals.
+async function songAudioUrls(id, an, tr = 0, speed = 100) {
+  const m = `/media/songs/${id}/`;
+  let urls = an.backing ? { band: m + 'band.mp3', backing: m + 'backing.mp3', vocals: m + 'vocals.mp3' }
+    : { accompaniment: m + 'accompaniment.mp3', vocals: m + 'vocals.mp3' };
+  if (tr || speed !== 100) urls = await api(`/api/songs/${id}/audio`, { method: 'POST', json: { semitones: tr, speed } });
+  // the editor can rebuild the vocals; a new revision means new addresses, so no stale copies
+  return Object.fromEntries(Object.entries(urls).map(([k, u]) => [k, u && `${u}?r=${an.audio_rev || 0}`]));
+}
+
 // Songs are decoded off to the side at 32 kHz: no tap needed to load them, a third less
 // memory than 48 kHz on phones, and the buffers play in whichever context exists later.
 const bufferCache = new Map();
@@ -559,6 +570,7 @@ class Practice {
         this.recorder = new MediaRecorder(A.stream);
         this.recorder.ondataavailable = e => e.data.size && this.chunks.push(e.data);
         this.recorder.start();
+        this.recAt = ctx.currentTime;   // the song's first sample lands (startCtx + latency − recAt) s into the take
       } catch { this.recorder = null; }
     }
     clearTimeout(this.endTimer);
@@ -631,8 +643,9 @@ class Practice {
     if (!s.octaveFree && this.oct && reached - this.section.from > 5) {
       toast(`You sang ${Math.abs(this.oct) === 1 ? 'an octave' : Math.abs(this.oct) + ' octaves'} ${this.oct > 0 ? 'above' : 'below'} the notes, so they scored as misses. Change "Sing it" to match where you sing, or tick "Any octave counts".`, 9000);
     }
-    let take = null;
+    let take = null, takeSync = null;
     if (this.recorder) {
+      takeSync = { lead: +(this.startCtx + (this.latency || 0) - this.recAt).toFixed(3), rate: this.rate };
       take = await new Promise(res => {
         this.recorder.onstop = () => res(new Blob(this.chunks, { type: this.recorder.mimeType }));
         this.recorder.stop();
@@ -649,7 +662,7 @@ class Practice {
     }
     const off = this.trail.length > 100 ? bestOffset(this.notes, this.trail, s, this.tune) : { off: 0 };
     return {
-      finished, score, take, bias, timingOffset: off.off / this.rate,   // real seconds, for the device setting
+      finished, score, take, takeSync, bias, timingOffset: off.off / this.rate,   // real seconds, for the device setting
       speed: Math.round(this.rate * 100),
       notes: graded.map(n => ({ midi: n.midi, t0: n.t0, score: +n.result.score.toFixed(3), bias: n.result.bias === null ? null : Math.round(n.result.bias) })),
       section: this.section,
@@ -863,7 +876,8 @@ async function saveRun(kind, ref, title, res, extra = {}) {
   const fd = new FormData();
   fd.append('meta', JSON.stringify({
     kind, ref, title, score: res.score === null ? null : +res.score.toFixed(1),
-    details: { notes: res.notes, bias: res.bias, section: res.section, timingOffset: res.timingOffset, ...extra },
+    details: { notes: res.notes, bias: res.bias, section: res.section, timingOffset: res.timingOffset,
+      ...(res.take && res.takeSync ? { takeSync: res.takeSync } : {}), ...extra },
   }));
   if (res.take && res.take.size > 2000) fd.append('take', res.take, 'take');
   return api('/api/runs', { method: 'POST', body: fd });
@@ -1149,6 +1163,7 @@ function route(re, fn, nav) { routes.push({ re, fn, nav }); }
 
 async function render() {
   if (cleanup) { try { cleanup(); } catch { /* ignore */ } cleanup = null; }
+  if (typeof stopOverlay === 'function') stopOverlay();
   const hash = location.hash.slice(1) || '/';
   for (const r of routes) {
     const m = hash.match(r.re);
@@ -1697,7 +1712,8 @@ route(/^\/song\/([0-9a-f]{12})(?:\?lesson=(\d\.\d))?$/, async (id, lessonId) => 
     <p class="dim small">Wrong notes, or the guide vocal singing a backing part? <a href="#/song/${id}/edit">Fix them in the editor</a>${an.notes_edited || an.vocal_fixes?.length ? ' (this song has your fixes in it)' : ''}.</p>
     ${an.backing || !an.lead_split ? '' : `<p class="dim small" id="backHint">Want the backing vocals on their own slider? <button id="splitBack">Re-analyse this song</button> (takes a few minutes; lyrics, key and scores are kept).</p>`}
     ${Math.abs(an.tuning || 0) >= 10 ? `<p class="dim small">Recording is tuned ${an.tuning > 0 ? '+' : ''}${an.tuning}¢ from A440; targets follow it.</p>` : ''}
-    <div id="res"></div>`;
+    <div id="res"></div>
+    <div id="takes"></div>`;
   const stage = $('#stage');
   const parseT = v => { const p = String(v).split(':').map(Number); return p.length === 2 ? p[0] * 60 + p[1] : p[0] || 0; };
   const sec = () => ({ from: clamp(parseT($('#from').value), 0, an.duration), to: clamp(parseT($('#to').value), 0, an.duration) });
@@ -1759,12 +1775,7 @@ route(/^\/song\/([0-9a-f]{12})(?:\?lesson=(\d\.\d))?$/, async (id, lessonId) => 
     $('#loadmsg').textContent = speed !== 100 ? 'Slowing the music down (first time takes up to half a minute)…'
       : tr ? 'Shifting the music to the new key (first time takes a few seconds)…' : 'Loading audio…';
     try {
-      const m = `/media/songs/${id}/`;
-      let urls = an.backing ? { band: m + 'band.mp3', backing: m + 'backing.mp3', vocals: m + 'vocals.mp3' }
-        : { accompaniment: m + 'accompaniment.mp3', vocals: m + 'vocals.mp3' };
-      if (tr || speed !== 100) urls = await api(`/api/songs/${id}/audio`, { method: 'POST', json: { semitones: tr, speed } });
-      // the editor can rebuild the vocals; a new revision means new addresses, so no stale copies
-      urls = Object.fromEntries(Object.entries(urls).map(([k, u]) => [k, u && `${u}?r=${an.audio_rev || 0}`]));
+      const urls = await songAudioUrls(id, an, tr, speed);
       const [accomp, backing, vocals] = await Promise.all([loadBuffer(urls.band || urls.accompaniment),
         urls.band && urls.backing ? loadBuffer(urls.backing) : null, loadBuffer(urls.vocals)]);
       if (mine !== audioReq || !$('#loadmsg')) return;     // left the page while it loaded
@@ -1803,6 +1814,8 @@ route(/^\/song\/([0-9a-f]{12})(?:\?lesson=(\d\.\d))?$/, async (id, lessonId) => 
     } catch (err) { toast(err.message); }
   };
   setupLyrics(id, P, song);
+  songTakes($('#takes'), id);
+  $('#res').addEventListener('click', e => { const b = e.target.closest('[data-overlay]'); if (b) openOverlay(+b.dataset.overlay); });
   const lessonCtl = lessonId && typeof setupSongLesson === 'function' ? (await course(), setupSongLesson(lessonId, {
     id, song, an, P, sec, view,
     setGuide: v => { $('#vVoc').value = v; vols.vocals = v; P.setVolume('vocals', v); },
@@ -1824,6 +1837,7 @@ route(/^\/song\/([0-9a-f]{12})(?:\?lesson=(\d\.\d))?$/, async (id, lessonId) => 
     const { from, to } = sec();
     if (to - from < 2) return toast('Section is too short');
     if (needsTimingCheck() && !(await timingCheck())) return;
+    stopOverlay();
     const start = P.pos >= from && P.pos < to - 1 ? P.pos : from;
     playBtn.textContent = '■ Stop'; $('#res').innerHTML = '';
     try { await P.play({ from: start, to }); } catch (e) { playBtn.textContent = '▶ Sing'; return toast(e.message, 6000); }
@@ -1845,6 +1859,12 @@ route(/^\/song\/([0-9a-f]{12})(?:\?lesson=(\d\.\d))?$/, async (id, lessonId) => 
         .catch(e => { toast('Couldn’t save run: ' + e.message); return null; });
     }
     lessonCtl?.onResult({ ...res, finished }, runP);
+    if (res.take) runP.then(r => {
+      if (!r?.id || !document.body.contains(stage)) return;
+      const p = $('#res audio')?.parentElement;
+      if (p) p.insertAdjacentHTML('beforeend', ` <button data-overlay="${r.id}">🎧 Hear it over the song</button>`);
+      songTakes($('#takes'), id);
+    });
     // Coach: only for a real attempt (graded notes and at least ~5 s of singing).
     if (res.score !== null && res.notes.length >= 4) {
       const cf = coachRunFields(res, P);
@@ -2313,7 +2333,7 @@ route(/^\/history$/, async () => {
     <h2>Recent runs</h2>
     <div class="card table-wrap"><table id="runs"><tr><th>When</th><th>What</th><th>Score</th><th></th></tr>
     ${runs.map(r => `<tr data-id="${r.id}"><td class="small">${fmtDate(r.created)}</td><td>${esc(r.title || r.ref)} <span class="dim small">${r.kind}</span></td><td>${r.score == null ? '–' : Math.round(r.score) + '%'}</td>
-      <td class="row" style="justify-content:flex-end">${r.take ? `<button data-play="${esc(r.take)}">▶ Take</button>` : ''}<button data-del class="danger">✕</button></td></tr>`).join('')}
+      <td class="row" style="justify-content:flex-end">${r.take ? `<button data-play="${esc(r.take)}">▶ Take</button>` : ''}${r.take && r.kind === 'song' ? `<button data-overlay="${r.id}" title="Play this take over the original song">🎧 With song</button>` : ''}<button data-del class="danger">✕</button></td></tr>`).join('')}
     </table>${runs.length ? '' : '<p class="dim">Nothing yet. Sing something.</p>'}</div>
     <h2>Start fresh</h2>
     <div class="card">
@@ -2371,6 +2391,7 @@ route(/^\/history$/, async () => {
   $('#runs').onclick = async e => {
     const tr = e.target.closest('tr[data-id]'); if (!tr) return;
     if (e.target.dataset.play) { const p = $('#player'); p.src = `/media/takes/${e.target.dataset.play}`; p.play(); }
+    if (e.target.dataset.overlay) { $('#player').pause(); openOverlay(+e.target.dataset.overlay); }
     if (e.target.closest('[data-del]') && confirm('Delete this run?')) { await api(`/api/runs/${tr.dataset.id}`, { method: 'DELETE' }); tr.remove(); }
   };
 }, 'history');
